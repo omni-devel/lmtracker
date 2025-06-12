@@ -1,0 +1,7 @@
+# config.yml example
+
+users:
+  - name: omni-devel
+    password: 12345
+  - name: user123
+    password: qwerty
