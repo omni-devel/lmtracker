@@ -17,7 +17,20 @@ pub struct CreateProjectRequest {
 }
 
 #[derive(Deserialize)]
-pub struct AddMetricsRequest {
+pub struct PushMetricsRequest {
     pub project_name: String,
+    pub run_name: String,
     pub metrics: serde_json::Value,
+}
+
+#[derive(Deserialize)]
+pub struct GetRunRequest {
+    pub project_name: String,
+    pub run_name: String,
+}
+
+#[derive(Serialize)]
+pub struct GetMetricsResponse {
+    pub ok: bool,
+    pub metrics: Vec<serde_json::Value>,
 }

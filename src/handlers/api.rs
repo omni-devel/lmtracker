@@ -57,8 +57,8 @@ pub async fn create_project(req: HttpRequest, data: web::Json<api_json::CreatePr
         })
 }
 
-#[post("/api/add-metrics")]
-pub async fn add_metrics(req: HttpRequest, data: web::Json<api_json::AddMetricsRequest>, state: web::Data<AppState>) -> HttpResponse {
+#[post("/api/push-metrics")]
+pub async fn push_metrics(req: HttpRequest, data: web::Json<api_json::PushMetricsRequest>, state: web::Data<AppState>) -> HttpResponse {
     let auth_data = match check_auth(req, &state.config) {
         Some(d) => d,
         None => {
@@ -69,11 +69,41 @@ pub async fn add_metrics(req: HttpRequest, data: web::Json<api_json::AddMetricsR
         }
     };
 
-    match database::write_metrics(&auth_data.name, &data.project_name, &data.metrics).await {
+    match database::write_metrics(&auth_data.name, &data.project_name, &data.run_name, &data.metrics).await {
         Ok(()) => {
             HttpResponse::Ok()
                 .json(api_json::OkResponse {
                     ok: true,
+                })
+        },
+        Err(e) => {
+            HttpResponse::BadRequest()
+                .json(api_json::OkWithMessageResponse {
+                    ok: false,
+                    message: e,
+                })
+        }
+    }
+}
+
+#[post("/api/get-run")]
+pub async fn get_run(req: HttpRequest, data: web::Json<api_json::GetRunRequest>, state: web::Data<AppState>) -> HttpResponse {
+    let auth_data = match check_auth(req, &state.config) {
+        Some(d) => d,
+        None => {
+            return HttpResponse::Unauthorized()
+                .json(api_json::OkResponse {
+                    ok: false,
+                });
+        }
+    };
+
+    match database::read_metrics(&auth_data.name, &data.project_name, &data.run_name).await {
+        Ok(metrics) => {
+            HttpResponse::Ok()
+                .json(api_json::GetMetricsResponse {
+                    ok: true,
+                    metrics,
                 })
         },
         Err(e) => {
