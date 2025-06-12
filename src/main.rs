@@ -57,5 +57,6 @@ async fn run_web_server(config: Config) {
             .app_data(config_data.clone())
             .service(handlers::app::index)
             .service(handlers::api::create_project)
+            .service(handlers::api::add_metrics)
     }).bind((addr, port)).unwrap().run().await.unwrap();
 }

@@ -20,30 +20,43 @@ pub async fn create_project(user_name: &String, project_name: &String) {
     let _ = fs::write(
         format!("./database/{}/{}.jsonl", user_name, project_name),
         String::new(),
-    );
+    ).await.unwrap();
 }
 
-pub async fn write_metrics(user_name: &String, project_name: &String, metrics: &serde_json::Value) -> Result<(), String> {
+pub async fn write_metrics(
+    user_name: &String,
+    project_name: &String,
+    metrics: &serde_json::Value,
+) -> Result<(), String> {
     let project_path = format!("./database/{}/{}.jsonl", user_name, project_name);
 
-    let mut file = fs::File::options().append(true).open(&project_path).await.unwrap();
-    let mut reader = io::BufReader::new(&mut file).lines();
+    let file_exists = fs::metadata(&project_path).await.is_ok();
 
-    if let Some(line) = reader.next_line().await.unwrap() {
-        let first_line_metrics = match serde_json::from_str::<serde_json::Value>(&line) {
-            Ok(m) => m,
-            Err(e) => {
-                return Err(e.to_string());
-            },
-        };
+    if file_exists {
+        let mut file = fs::File::open(&project_path).await.map_err(|e| e.to_string())?;
+        let mut reader = io::BufReader::new(&mut file).lines();
 
-        if !same_json_schema(&first_line_metrics, metrics) {
-            return Err(String::from("Invalid schema"));
+        if let Some(line) = reader.next_line().await.map_err(|e| e.to_string())? {
+            let first_line_metrics = serde_json::from_str::<serde_json::Value>(&line)
+                .map_err(|e| e.to_string())?;
+
+            if !same_json_schema(&first_line_metrics, metrics) {
+                return Err(String::from("Invalid schema"));
+            }
         }
     }
 
-    file.write(serde_json::to_string(metrics).unwrap().as_bytes()).await.unwrap();
-    file.write("\n".as_bytes()).await.unwrap();
+    let mut file = fs::OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open(&project_path)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    file.write_all(serde_json::to_string(metrics).unwrap().as_bytes())
+        .await
+        .map_err(|e| e.to_string())?;
+    file.write_all(b"\n").await.map_err(|e| e.to_string())?;
 
     Ok(())
 }
