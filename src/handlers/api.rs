@@ -17,7 +17,7 @@ pub async fn create_project(req: HttpRequest, data: web::Json<api_json::CreatePr
             }
 
             structs::User {
-                username: data.get(0).unwrap().to_string(),
+                name: data.get(0).unwrap().to_string(),
                 password: data.get(1).unwrap().to_string(),
             }
         },

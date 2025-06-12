@@ -2,15 +2,20 @@ pub mod api;
 
 use serde::{Serialize, Deserialize};
 
-#[derive(Deserialize)]
+#[derive(Clone)]
+pub struct AppState {
+    pub config: Config,
+}
+
+#[derive(Deserialize, Clone)]
 pub struct User {
-    pub username: String,
+    pub name: String,
     pub password: String,
 }
 
 impl User {
     pub fn verify(self) -> Result<(), String> {
-        if self.username.contains(':') {
+        if self.name.contains(':') {
             Err(String::from("Username cannot contains a `:` symbol!"))
         } else if self.password.contains(':') {
             Err(String::from("Password cannot contains a `:` symbol!"))
@@ -20,7 +25,9 @@ impl User {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 pub struct Config {
-    users: Vec<User>,
+    pub users: Vec<User>,
+    pub addr: String,
+    pub port: u16,
 }
