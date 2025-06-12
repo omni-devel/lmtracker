@@ -38,6 +38,8 @@ async fn main() -> ExitCode {
         }
     };
 
+    database::init(&config.users).await;
+
     run_web_server(config).await;
 
     ExitCode::from(0)
