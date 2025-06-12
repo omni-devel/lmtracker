@@ -1,5 +1,7 @@
 use serde::{Serialize, Deserialize};
 
+use std::time::SystemTime;
+
 #[derive(Serialize)]
 pub struct OkResponse {
     pub ok: bool,
@@ -33,4 +35,27 @@ pub struct GetRunRequest {
 pub struct GetMetricsResponse {
     pub ok: bool,
     pub metrics: Vec<serde_json::Value>,
+}
+
+#[derive(Deserialize)]
+pub struct GetRunsRequest {
+    pub project_name: String,
+}
+
+#[derive(Serialize)]
+pub struct Project {
+    pub name: String,
+    pub modified_at: u64,
+}
+
+#[derive(Serialize)]
+pub struct GetProjectsResponse {
+    pub ok: bool,
+    pub projects: Vec<Project>,
+}
+
+#[derive(Serialize)]
+pub struct GetRunsResponse {
+    pub ok: bool,
+    pub runs: Vec<Project>,
 }

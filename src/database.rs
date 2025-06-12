@@ -1,6 +1,6 @@
 use tokio::{fs, io::{self, AsyncBufReadExt, AsyncWriteExt}};
 
-use crate::data::structs::{User, same_json_schema};
+use crate::data::structs::{User, api::Project, same_json_schema};
 
 pub async fn init(users: &Vec<User>) {
     let _ = fs::create_dir("./database").await;
@@ -91,4 +91,47 @@ pub async fn read_metrics(
     } else {
         Err(String::from("Run not found"))
     }
+}
+
+pub async fn get_projects(
+    user_name: &String,
+) -> Vec<Project> {
+    let projects_path = format!("./database/{}", user_name);
+
+    let mut result: Vec<Project> = Vec::new();
+
+    let mut dirs = fs::read_dir(&projects_path).await.unwrap();
+
+    while let Some(dir) = dirs.next_entry().await.unwrap() {
+        result.push(Project {
+            name: dir.path().display().to_string().split('/').collect::<Vec<&str>>().last().unwrap().to_string(),
+            modified_at: dir.metadata().await.unwrap().modified().unwrap().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs(),
+        });
+    }
+
+    result.sort_by(|a, b| a.modified_at.cmp(&b.modified_at));
+
+    result
+}
+
+pub async fn get_runs(
+    user_name: &String,
+    project_name: &String,
+) -> Result<Vec<Project>, String> {
+    let projects_path = format!("./database/{}/{}", user_name, project_name);
+
+    let mut result: Vec<Project> = Vec::new();
+
+    let mut dirs = fs::read_dir(&projects_path).await.map_err(|e| e.to_string())?;
+
+    while let Some(dir) = dirs.next_entry().await.unwrap() {
+        result.push(Project {
+            name: dir.path().display().to_string().split('/').collect::<Vec<&str>>().last().unwrap().to_string(),
+            modified_at: dir.metadata().await.unwrap().modified().unwrap().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs(),
+        });
+    }
+
+    result.sort_by(|a, b| a.modified_at.cmp(&b.modified_at));
+
+    Ok(result)
 }

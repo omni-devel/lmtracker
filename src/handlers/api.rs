@@ -115,3 +115,52 @@ pub async fn get_run(req: HttpRequest, data: web::Json<api_json::GetRunRequest>,
         }
     }
 }
+
+#[post("/api/get-projects")]
+pub async fn get_projects(req: HttpRequest, state: web::Data<AppState>) -> HttpResponse {
+    let auth_data = match check_auth(req, &state.config) {
+        Some(d) => d,
+        None => {
+            return HttpResponse::Unauthorized()
+                .json(api_json::OkResponse {
+                    ok: false,
+                });
+        }
+    };
+
+    HttpResponse::Ok()
+        .json(api_json::GetProjectsResponse {
+            ok: true,
+            projects: database::get_projects(&auth_data.name).await,
+        })
+}
+
+#[post("/api/get-runs")]
+pub async fn get_runs(req: HttpRequest, data: web::Json<api_json::GetRunsRequest>, state: web::Data<AppState>) -> HttpResponse {
+    let auth_data = match check_auth(req, &state.config) {
+        Some(d) => d,
+        None => {
+            return HttpResponse::Unauthorized()
+                .json(api_json::OkResponse {
+                    ok: false,
+                });
+        }
+    };
+
+    match database::get_runs(&auth_data.name, &data.project_name).await {
+        Ok(runs) => {
+            HttpResponse::Ok()
+                .json(api_json::GetRunsResponse {
+                    ok: true,
+                    runs,
+                })
+        },
+        Err(e) => {
+            HttpResponse::BadRequest()
+                .json(api_json::OkWithMessageResponse {
+                    ok: false,
+                    message: e,
+                })
+        }
+    }
+}

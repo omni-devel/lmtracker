@@ -59,5 +59,7 @@ async fn run_web_server(config: Config) {
             .service(handlers::api::create_project)
             .service(handlers::api::push_metrics)
             .service(handlers::api::get_run)
+            .service(handlers::api::get_projects)
+            .service(handlers::api::get_runs)
     }).bind((addr, port)).unwrap().run().await.unwrap();
 }
