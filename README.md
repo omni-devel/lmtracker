@@ -26,21 +26,12 @@ All your project and run data is stored locally in a `database` folder. Each run
 
 ## 🚀 Setup & Usage
 
-1.  **Copy the sample config:**
-    ```sh
-    cp config.yml.sample config.yml
-    ```
-2.  **Edit your configuration:**
-    ```sh
-    nano config.yml
-    ```
-    Make sure to replace all parameters with your own values (especially `users` and `password` for security).
-
-3.  **Build and run the service:**
-    ```sh
-    cargo run --release
-    ```
-    This will start the LMTracker server, usually on `http://localhost:8683` (or whatever address/port you configured).
+**Build and run the service:**
+```sh
+cargo run --release
+```
+This will start the LMTracker server, usually on `http://localhost:8683` (or whatever address/port you configured).
+On first launch, you will be prompted to create a configuration file. When creating the configuration file, the number of users you specify will be generated, each with a random username and a secure password.
 
 ---
 

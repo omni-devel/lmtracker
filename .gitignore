@@ -28,3 +28,5 @@ target/
 database/
 
 config.yml
+
+Cargo.lock
