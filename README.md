@@ -212,7 +212,3 @@ Check out the `examples/` directory for practical implementations:
 
     trainer.train()
     ```
-
----
-
-> _Track your metrics like a pro. Local, fast, no wandb!_
