@@ -125,10 +125,19 @@ pub async fn get_runs(
     let mut dirs = fs::read_dir(&projects_path).await.map_err(|e| e.to_string())?;
 
     while let Some(dir) = dirs.next_entry().await.unwrap() {
-        result.push(Project {
-            name: dir.path().display().to_string().split('/').collect::<Vec<&str>>().last().unwrap().to_string(),
-            modified_at: dir.metadata().await.unwrap().modified().unwrap().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs(),
-        });
+        let path = dir.path();
+        if path.is_file() {
+            if let Some(extension) = path.extension() {
+                if extension == "jsonl" {
+                    if let Some(file_stem) = path.file_stem() {
+                        result.push(Project {
+                            name: file_stem.to_string_lossy().into_owned(),
+                            modified_at: dir.metadata().await.unwrap().modified().unwrap().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs(),
+                        });
+                    }
+                }
+            }
+        }
     }
 
     result.sort_by(|a, b| a.modified_at.cmp(&b.modified_at));

@@ -1,7 +1,5 @@
 use serde::{Serialize, Deserialize};
 
-use std::time::SystemTime;
-
 #[derive(Serialize)]
 pub struct OkResponse {
     pub ok: bool,

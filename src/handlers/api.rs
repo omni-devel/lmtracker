@@ -5,6 +5,7 @@ use crate::data::structs::{
     api as api_json, AppState,
     User,
 };
+use crate::data::INVALID_NAME_CHARS;
 
 use crate::database;
 
@@ -48,6 +49,14 @@ pub async fn create_project(req: HttpRequest, data: web::Json<api_json::CreatePr
         }
     };
 
+    if INVALID_NAME_CHARS.iter().any(|s| data.name.contains(*s)) {
+        return HttpResponse::BadRequest()
+            .json(api_json::OkWithMessageResponse {
+                ok: false,
+                message: String::from("Invalid name"),
+            });
+    }
+
     database::create_project(&auth_data.name, &data.name).await;
 
     HttpResponse::Ok()
@@ -67,6 +76,14 @@ pub async fn push_metrics(req: HttpRequest, data: web::Json<api_json::PushMetric
                 });
         }
     };
+
+    if INVALID_NAME_CHARS.iter().any(|s| data.project_name.contains(*s) || data.run_name.contains(*s)) {
+        return HttpResponse::BadRequest()
+            .json(api_json::OkWithMessageResponse {
+                ok: false,
+                message: String::from("Invalid name"),
+            });
+    }
 
     match database::write_metrics(&auth_data.name, &data.project_name, &data.run_name, &data.metrics).await {
         Ok(()) => {

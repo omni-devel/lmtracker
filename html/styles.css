@@ -1,0 +1,222 @@
+:root {
+    --orange-primary: #ff8a00;
+    --orange-secondary: #ff6a00;
+    --orange-light: #ffa94d;
+    --dark-primary: #121212;
+    --dark-secondary: #1e1e1e;
+    --dark-tertiary: #2d2d2d;
+    --gray-primary: #9e9e9e;
+    --gray-secondary: #757575;
+    --gray-light: #bdbdbd;
+}
+
+body {
+    background-color: var(--dark-primary);
+    color: var(--gray-light);
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+.bg-dark-secondary {
+    background-color: var(--dark-secondary);
+}
+
+.bg-dark-tertiary {
+    background-color: var(--dark-tertiary);
+}
+
+.text-orange {
+    color: var(--orange-primary) !important;
+}
+
+.btn-orange {
+    background-color: var(--orange-primary);
+    border-color: var(--orange-primary);
+    color: white;
+}
+
+.btn-orange:hover,
+.btn-orange:focus {
+    background-color: var(--orange-secondary);
+    border-color: var(--orange-secondary);
+    color: white;
+}
+
+.btn-outline-orange {
+    border-color: var(--orange-primary);
+    color: var(--orange-primary);
+}
+
+.btn-outline-orange:hover,
+.btn-outline-orange:focus {
+    background-color: var(--orange-primary);
+    color: white;
+}
+
+.card {
+    background-color: var(--dark-secondary);
+    border: none;
+    border-radius: 10px;
+    transition: transform 0.2s;
+}
+
+.card-header {
+    border-bottom: 1px solid var(--dark-tertiary);
+}
+
+.form-control,
+.form-select {
+    background-color: var(--dark-tertiary);
+    border: 1px solid var(--gray-secondary);
+    color: var(--gray-light);
+}
+
+.form-control:focus,
+.form-select:focus {
+    background-color: var(--dark-tertiary);
+    border-color: var(--orange-primary);
+    box-shadow: 0 0 0 0.25rem rgba(255, 138, 0, 0.25);
+    color: var(--gray-light);
+}
+
+.navbar {
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+}
+
+.project-card {
+    cursor: pointer;
+}
+
+.metric-card {
+    margin-bottom: 20px;
+}
+
+.chart-container {
+    position: relative;
+    height: 300px;
+}
+
+.fullscreen-btn {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    z-index: 10;
+    background-color: rgba(30, 30, 30, 0.7);
+    border: none;
+    color: var(--gray-light);
+    border-radius: 4px;
+    padding: 5px 10px;
+}
+
+.fullscreen-btn:hover {
+    background-color: rgba(30, 30, 30, 0.9);
+    color: var(--orange-primary);
+}
+
+.runs-dropdown-menu {
+    width: 300px;
+    max-height: 500px;
+}
+
+.runs-list {
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.run-item {
+    padding: 5px;
+    border-radius: 4px;
+    margin-bottom: 5px;
+}
+
+.run-item:hover {
+    background-color: var(--dark-tertiary);
+}
+
+.dropdown-menu {
+    background-color: var(--dark-secondary);
+    border: 1px solid var(--dark-tertiary);
+}
+
+.dropdown-item {
+    color: var(--gray-light);
+}
+
+.dropdown-item:hover,
+.dropdown-item:focus {
+    background-color: var(--dark-tertiary);
+    color: var(--orange-primary);
+}
+
+.tooltip-inner {
+    background-color: var(--dark-secondary);
+    border: 1px solid var(--dark-tertiary);
+    color: var(--gray-light);
+}
+
+.runs-dropdown-menu .d-flex>div {
+    display: flex;
+    flex-direction: column !important;
+    gap: 8px;
+    align-items: stretch !important;
+}
+
+.runs-dropdown-menu .btn {
+    width: 100%;
+    margin-bottom: 6px;
+}
+
+@media (max-width: 576px) {
+    .d-flex.justify-content-between.align-items-center.mb-4 {
+        flex-direction: column !important;
+        align-items: stretch !important;
+        gap: 10px;
+    }
+
+    #project-details .btn,
+    #project-details .dropdown,
+    #project-details .dropdown .btn {
+        width: 100%;
+        margin-bottom: 8px;
+    }
+
+    .dropdown-menu.runs-dropdown-menu {
+        width: 100vw !important;
+        left: 0 !important;
+        right: 0 !important;
+        min-width: unset !important;
+        max-width: unset !important;
+        border-radius: 0 0 12px 12px;
+        padding: 1rem 0.5rem !important;
+    }
+
+    .runs-dropdown-menu .d-flex>div {
+        flex-direction: column !important;
+        gap: 8px;
+    }
+
+    .runs-dropdown-menu .btn {
+        width: 100%;
+        margin-bottom: 6px;
+    }
+
+    .runs-list {
+        max-height: 200px;
+    }
+
+    .navbar .navbar-collapse {
+        background: var(--dark-secondary);
+        padding: 1rem;
+    }
+}
+
+.runs-select-btns {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 8px;
+    margin-bottom: 8px;
+}
+
+.runs-select-btns .btn {
+    width: 100%;
+}

@@ -1,6 +1,6 @@
 pub mod api;
 
-use serde::{Serialize, Deserialize};
+use serde::Deserialize;
 
 pub fn same_json_schema(a: &serde_json::Value, b: &serde_json::Value) -> bool {
     use serde_json::Value;

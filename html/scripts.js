@@ -1,0 +1,617 @@
+const API_BASE_URL = '';
+let currentUser = null;
+let currentProject = null;
+let allRuns = [];
+let selectedRuns = [];
+let charts = {};
+
+const loginContainer = document.getElementById('login-container');
+const mainContainer = document.getElementById('main-container');
+const loadingContainer = document.getElementById('loading-container');
+const loginForm = document.getElementById('login-form');
+const userInfoElement = document.getElementById('user-info');
+const projectsList = document.getElementById('projects-list');
+const projectsView = document.getElementById('projects-view');
+const projectDetails = document.getElementById('project-details');
+const projectNameElement = document.getElementById('project-name');
+const metricsContainer = document.getElementById('metrics-container');
+const runsList = document.getElementById('runs-list');
+const runsSearch = document.getElementById('runs-search');
+
+document.addEventListener('DOMContentLoaded', init);
+
+async function init() {
+    setupEventListeners();
+    await checkAuthentication();
+    hideLoading();
+}
+
+function setupEventListeners() {
+    loginForm.addEventListener('submit', handleLogin);
+    document.getElementById('logout-btn').addEventListener('click', handleLogout);
+
+    document.getElementById('projects-link').addEventListener('click', showProjects);
+
+    document.getElementById('new-project-btn').addEventListener('click', () => {
+        const modal = new bootstrap.Modal(document.getElementById('new-project-modal'));
+        modal.show();
+    });
+    document.getElementById('create-project-btn').addEventListener('click', createProject);
+
+    document.getElementById('select-all-runs').addEventListener('click', selectAllRuns);
+    document.getElementById('deselect-all-runs').addEventListener('click', deselectAllRuns);
+    document.getElementById('apply-runs-selection').addEventListener('click', applyRunsSelection);
+    runsSearch.addEventListener('input', filterRuns);
+}
+
+async function checkAuthentication() {
+    const credentials = getCookieCredentials();
+
+    if (!credentials) {
+        showLogin();
+        return;
+    }
+
+    try {
+        const response = await fetchWithAuth('/api/check-user', {
+            method: 'GET'
+        }, credentials.username, credentials.password);
+
+        if (response.ok) {
+            currentUser = credentials.username;
+            userInfoElement.textContent = `User: ${currentUser}`;
+            showMain();
+            loadProjects();
+        } else {
+            showLogin();
+        }
+    } catch (error) {
+        console.error('Authentication error:', error);
+        showLogin();
+    }
+}
+
+async function handleLogin(event) {
+    event.preventDefault();
+
+    const username = document.getElementById('username').value;
+    const password = document.getElementById('password').value;
+
+    showLoading();
+
+    try {
+        const response = await fetchWithAuth('/api/check-user', {
+            method: 'GET'
+        }, username, password);
+
+        if (response.ok) {
+            setCookieCredentials(username, password);
+            currentUser = username;
+            userInfoElement.textContent = `User: ${currentUser}`;
+            showMain();
+            loadProjects();
+        } else {
+            alert('Incorrect username or password');
+            hideLoading();
+            showLogin();
+        }
+    } catch (error) {
+        console.error('Authentication error:', error);
+        alert('Authentication error');
+        hideLoading();
+    }
+}
+
+function handleLogout() {
+    clearCookieCredentials();
+    currentUser = null;
+    showLogin();
+}
+
+async function loadProjects() {
+    showLoading();
+
+    try {
+        const response = await fetchWithAuth('/api/get-projects', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({})
+        });
+
+        if (response.ok) {
+            const data = await response.json();
+            renderProjects(data.projects);
+        } else {
+            alert('Failed to load projects');
+        }
+    } catch (error) {
+        console.error('Projects loading error:', error);
+        alert('Projects loading error');
+    } finally {
+        hideLoading();
+    }
+}
+
+function renderProjects(projects) {
+    projectsList.innerHTML = '';
+
+    if (projects.length === 0) {
+        projectsList.innerHTML = '<div class="col-12"><p class="text-center">There are no available projects</p></div>';
+        return;
+    }
+
+    projects.forEach(project => {
+        const date = new Date(project.modified_at * 1000);
+        const formattedDate = date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
+
+        const projectCard = document.createElement('div');
+        projectCard.className = 'col-md-4 col-lg-3 mb-4';
+        projectCard.innerHTML = `
+            <div class="card project-card h-100">
+                <div class="card-body">
+                    <h5 class="card-title text-orange">${project.name}</h5>
+                    <p class="card-text text-muted">Modified: ${formattedDate}</p>
+                </div>
+            </div>
+        `;
+
+        projectCard.querySelector('.project-card').addEventListener('click', () => {
+            openProject(project.name);
+        });
+
+        projectsList.appendChild(projectCard);
+    });
+}
+
+async function createProject() {
+    const projectName = document.getElementById('project-name-input').value.trim();
+
+    if (!projectName) {
+        alert('Enter project name');
+        return;
+    }
+
+    showLoading();
+
+    try {
+        const response = await fetchWithAuth('/api/create-project', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ name: projectName })
+        });
+
+        if (response.ok) {
+            bootstrap.Modal.getInstance(document.getElementById('new-project-modal')).hide();
+            document.getElementById('project-name-input').value = '';
+            loadProjects();
+        } else {
+            alert('Failed to create project');
+        }
+    } catch (error) {
+        console.error('Project creation error:', error);
+        alert('Failed to create project');
+    } finally {
+        hideLoading();
+    }
+}
+
+async function openProject(projectName) {
+    showLoading();
+    currentProject = projectName;
+    projectNameElement.textContent = projectName;
+
+    try {
+        const response = await fetchWithAuth('/api/get-runs', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ project_name: projectName })
+        });
+
+        if (response.ok) {
+            const data = await response.json();
+            allRuns = data.runs || [];
+            selectedRuns = [...allRuns];
+
+            renderRunsList();
+            showProjectDetails();
+            await loadMetrics();
+        } else {
+            alert('Failed to load runs');
+            showProjects();
+        }
+    } catch (error) {
+        console.error('Project opening error:', error);
+        alert('Project opening error');
+        showProjects();
+    } finally {
+        hideLoading();
+    }
+}
+
+function renderRunsList() {
+    runsList.innerHTML = '';
+
+    if (allRuns.length === 0) {
+        runsList.innerHTML = '<p class="text-center">There are no available runs</p>';
+        return;
+    }
+
+    allRuns.forEach(run => {
+        const isSelected = selectedRuns.some(r => r.name === run.name);
+        const date = new Date(run.modified_at * 1000);
+        const formattedDate = date.toLocaleDateString();
+
+        const runItem = document.createElement('div');
+        runItem.className = 'run-item';
+        runItem.innerHTML = `
+            <div class="form-check">
+                <input class="form-check-input" type="checkbox" value="${run.name}" id="run-${run.name}" ${isSelected ? 'checked' : ''}>
+                <label class="form-check-label d-flex justify-content-between" for="run-${run.name}">
+                    <span>${run.name}</span>
+                    <small class="text-muted">${formattedDate}</small>
+                </label>
+            </div>
+        `;
+
+        runItem.querySelector('.form-check-input').addEventListener('change', (e) => {
+            if (e.target.checked) {
+                if (!selectedRuns.some(r => r.name === run.name)) {
+                    selectedRuns.push(run);
+                }
+            } else {
+                selectedRuns = selectedRuns.filter(r => r.name !== run.name);
+            }
+        });
+
+        runsList.appendChild(runItem);
+    });
+}
+
+function filterRuns() {
+    const searchTerm = runsSearch.value.toLowerCase();
+    const runItems = runsList.querySelectorAll('.run-item');
+
+    runItems.forEach(item => {
+        const runName = item.querySelector('.form-check-label span').textContent.toLowerCase();
+        if (runName.includes(searchTerm)) {
+            item.style.display = '';
+        } else {
+            item.style.display = 'none';
+        }
+    });
+}
+
+function selectAllRuns() {
+    selectedRuns = [...allRuns];
+    const checkboxes = runsList.querySelectorAll('.form-check-input');
+    checkboxes.forEach(checkbox => {
+        checkbox.checked = true;
+    });
+}
+
+function deselectAllRuns() {
+    selectedRuns = [];
+    const checkboxes = runsList.querySelectorAll('.form-check-input');
+    checkboxes.forEach(checkbox => {
+        checkbox.checked = false;
+    });
+}
+
+async function applyRunsSelection() {
+    showLoading();
+    await loadMetrics();
+    hideLoading();
+
+    const dropdownEl = document.getElementById('runsDropdown');
+    const dropdownInstance = bootstrap.Dropdown.getInstance(dropdownEl);
+    if (dropdownInstance) {
+        dropdownInstance.hide();
+    }
+}
+
+async function loadMetrics() {
+    metricsContainer.innerHTML = '';
+    charts = {};
+
+    if (selectedRuns.length === 0) {
+        metricsContainer.innerHTML = '<div class="alert alert-warning">Select at least one run to display the metrics.</div>';
+        return;
+    }
+
+    const metricsData = {};
+
+    for (const run of selectedRuns) {
+        try {
+            const response = await fetchWithAuth('/api/get-run', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    project_name: currentProject,
+                    run_name: run.name
+                })
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+
+                if (data.metrics && data.metrics.length > 0) {
+                    data.metrics.forEach((metric, index) => {
+                        for (const [key, value] of Object.entries(metric)) {
+                            if (!metricsData[key]) {
+                                metricsData[key] = {};
+                            }
+
+                            if (!metricsData[key][run.name]) {
+                                metricsData[key][run.name] = [];
+                            }
+
+                            metricsData[key][run.name].push({
+                                x: index,
+                                y: value
+                            });
+                        }
+                    });
+                }
+            }
+        } catch (error) {
+            console.error(`Error loading metrics for ${run.name}:`, error);
+        }
+    }
+
+    renderMetricsCharts(metricsData);
+}
+
+function renderMetricsCharts(metricsData) {
+    if (Object.keys(metricsData).length === 0) {
+        metricsContainer.innerHTML = '<div class="alert alert-info">There are no available metrics for selected runs</div>';
+        return;
+    }
+
+    const row = document.createElement('div');
+    row.className = 'row';
+
+    for (const [metricName, runData] of Object.entries(metricsData)) {
+        const col = document.createElement('div');
+        col.className = 'col-md-6 col-lg-4 metric-card';
+
+        const card = document.createElement('div');
+        card.className = 'card h-100';
+
+        const cardBody = document.createElement('div');
+        cardBody.className = 'card-body';
+
+        const cardTitle = document.createElement('h5');
+        cardTitle.className = 'card-title text-orange mb-3';
+        cardTitle.textContent = metricName;
+
+        const chartContainer = document.createElement('div');
+        chartContainer.className = 'chart-container';
+
+        const canvas = document.createElement('canvas');
+        canvas.id = `chart-${metricName}`;
+
+        const fullscreenBtn = document.createElement('button');
+        fullscreenBtn.className = 'fullscreen-btn';
+        fullscreenBtn.innerHTML = '<i class="bi bi-fullscreen"></i>';
+        fullscreenBtn.addEventListener('click', () => {
+            openFullscreenChart(metricName, runData);
+        });
+
+        chartContainer.appendChild(canvas);
+        chartContainer.appendChild(fullscreenBtn);
+
+        cardBody.appendChild(cardTitle);
+        cardBody.appendChild(chartContainer);
+
+        card.appendChild(cardBody);
+        col.appendChild(card);
+        row.appendChild(col);
+
+        createChart(canvas, metricName, runData);
+    }
+
+    metricsContainer.appendChild(row);
+}
+
+function stringToColor(str) {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+        hash = str.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    const h = Math.abs(hash) % 360;
+    return `hsl(${h}, 80%, 50%)`;
+}
+
+function createChart(canvas, metricName, runData) {
+    const ctx = canvas.getContext('2d');
+    const datasets = [];
+
+    for (const [runName, dataPoints] of Object.entries(runData)) {
+        const color = stringToColor(runName);
+        datasets.push({
+            label: runName,
+            data: dataPoints,
+            borderColor: color,
+            backgroundColor: color.replace('50%', '80%').replace('hsl', 'hsla').replace(')', ',0.2)'),
+            borderWidth: 2,
+            tension: 0.1,
+            pointRadius: 3,
+            pointHoverRadius: 5
+        });
+    }
+
+    const chart = new Chart(ctx, {
+        type: 'line',
+        data: { datasets },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                x: {
+                    type: 'linear',
+                    title: {
+                        display: true,
+                        text: 'Step',
+                        color: '#9e9e9e'
+                    },
+                    grid: {
+                        color: '#2d2d2d'
+                    },
+                    ticks: {
+                        color: '#9e9e9e'
+                    }
+                },
+                y: {
+                    title: {
+                        display: true,
+                        text: metricName,
+                        color: '#9e9e9e'
+                    },
+                    grid: {
+                        color: '#2d2d2d'
+                    },
+                    ticks: {
+                        color: '#9e9e9e'
+                    }
+                }
+            },
+            plugins: {
+                tooltip: {
+                    mode: 'index',
+                    intersect: false,
+                    backgroundColor: '#1e1e1e',
+                    titleColor: '#ff8a00',
+                    bodyColor: '#bdbdbd',
+                    borderColor: '#2d2d2d',
+                    borderWidth: 1
+                },
+                legend: {
+                    position: 'top',
+                    labels: {
+                        color: '#9e9e9e',
+                        usePointStyle: true,
+                        padding: 20
+                    }
+                }
+            },
+            interaction: {
+                mode: 'nearest',
+                axis: 'x',
+                intersect: false
+            }
+        }
+    });
+
+    charts[metricName] = chart;
+}
+
+function openFullscreenChart(metricName, runData) {
+    const modal = new bootstrap.Modal(document.getElementById('fullscreen-chart-modal'));
+    document.getElementById('fullscreen-chart-title').textContent = metricName;
+
+    modal.show();
+
+    setTimeout(() => {
+        const container = document.getElementById('fullscreen-chart-container');
+        container.innerHTML = '';
+
+        const canvas = document.createElement('canvas');
+        canvas.id = `fullscreen-chart-${metricName}`;
+        container.appendChild(canvas);
+
+        createChart(canvas, metricName, runData);
+    }, 400);
+}
+
+function showLoading() {
+    loadingContainer.classList.remove('d-none');
+}
+
+function hideLoading() {
+    loadingContainer.classList.add('d-none');
+}
+
+function showLogin() {
+    hideLoading();
+    loginContainer.classList.remove('d-none');
+    mainContainer.classList.add('d-none');
+}
+
+function showMain() {
+    hideLoading();
+    loginContainer.classList.add('d-none');
+    mainContainer.classList.remove('d-none');
+}
+
+function showProjects() {
+    projectsView.classList.remove('d-none');
+    projectDetails.classList.add('d-none');
+}
+
+function showProjectDetails() {
+    projectsView.classList.add('d-none');
+    projectDetails.classList.remove('d-none');
+}
+
+function setCookieCredentials(username, password) {
+    const expirationDate = new Date();
+    expirationDate.setDate(expirationDate.getDate() + 30);
+
+    document.cookie = `lmt_username=${encodeURIComponent(username)}; expires=${expirationDate.toUTCString()}; path=/; SameSite=Strict`;
+    document.cookie = `lmt_password=${encodeURIComponent(password)}; expires=${expirationDate.toUTCString()}; path=/; SameSite=Strict`;
+}
+
+function getCookieCredentials() {
+    const cookies = document.cookie.split(';').map(cookie => cookie.trim());
+    let username = null;
+    let password = null;
+
+    for (const cookie of cookies) {
+        if (cookie.startsWith('lmt_username=')) {
+            username = decodeURIComponent(cookie.substring('lmt_username='.length));
+        } else if (cookie.startsWith('lmt_password=')) {
+            password = decodeURIComponent(cookie.substring('lmt_password='.length));
+        }
+    }
+
+    if (username && password) {
+        return { username, password };
+    }
+
+    return null;
+}
+
+function clearCookieCredentials() {
+    document.cookie = 'lmt_username=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/; SameSite=Strict';
+    document.cookie = 'lmt_password=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/; SameSite=Strict';
+}
+
+async function fetchWithAuth(url, options = {}, username = null, password = null) {
+    const user = username || currentUser;
+
+    const passCookie = document.cookie.split(';')
+        .map(cookie => cookie.trim())
+        .find(cookie => cookie.startsWith('lmt_password='));
+
+    const pass = password || (passCookie ? decodeURIComponent(passCookie.substring('lmt_password='.length)) : null);
+
+    if (!user || !pass) {
+        throw new Error('Non authorized');
+    }
+
+    const headers = options.headers || {};
+    headers['Authorization'] = `${user}:${pass}`;
+
+    return fetch(API_BASE_URL + url, {
+        ...options,
+        headers
+    });
+}
