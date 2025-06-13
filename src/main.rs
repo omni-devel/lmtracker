@@ -56,10 +56,13 @@ async fn run_web_server(config: Config) {
         App::new()
             .app_data(config_data.clone())
             .service(handlers::app::index)
+            .service(handlers::app::styles)
+            .service(handlers::app::scripts)
             .service(handlers::api::create_project)
             .service(handlers::api::push_metrics)
             .service(handlers::api::get_run)
             .service(handlers::api::get_projects)
             .service(handlers::api::get_runs)
+            .service(handlers::api::check_user)
     }).bind((addr, port)).unwrap().run().await.unwrap();
 }
