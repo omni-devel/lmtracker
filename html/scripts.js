@@ -6,7 +6,6 @@ let selectedRuns = [];
 let charts = {};
 let metricsRefreshIntervalId = null;
 
-// Global variables for the currently active fullscreen chart
 let currentFullscreenChartInstance = null;
 let currentFullscreenMetricName = null;
 
@@ -342,7 +341,6 @@ async function applyRunsSelection() {
 async function loadMetrics() {
     if (selectedRuns.length === 0) {
         stopMetricsAutoRefresh();
-        // Destroy and remove all existing chart instances and their elements
         for (const metricName in charts) {
             if (charts[metricName] && charts[metricName].instance) {
                 charts[metricName].instance.destroy();
@@ -353,7 +351,6 @@ async function loadMetrics() {
         }
         charts = {};
 
-        // Also ensure fullscreen chart is destroyed and container cleared if modal is open
         if (currentFullscreenChartInstance) {
             currentFullscreenChartInstance.destroy();
             currentFullscreenChartInstance = null;
@@ -414,7 +411,6 @@ async function loadMetrics() {
 
     updateMetricsDisplay(metricsData);
 
-    // Also update the fullscreen chart if it's currently open
     if (currentFullscreenMetricName && currentFullscreenChartInstance) {
         const runDataForFullscreen = metricsData[currentFullscreenMetricName];
 
@@ -436,7 +432,6 @@ async function loadMetrics() {
             currentFullscreenChartInstance.data.datasets = datasets;
             currentFullscreenChartInstance.update();
         } else {
-            // If data for the fullscreen metric is no longer available, close the modal
             console.warn(`Fullscreen metric '${currentFullscreenMetricName}' no longer has data. Closing modal.`);
             const modalElement = document.getElementById('fullscreen-chart-modal');
             const modalInstance = bootstrap.Modal.getInstance(modalElement);
@@ -498,7 +493,7 @@ function updateMetricsDisplay(newMetricsData) {
         if (charts[metricName]) {
             charts[metricName].instance.data.datasets = datasets;
             charts[metricName].instance.update();
-            if (charts[metricName].element) { // Ensure the element is visible in case it was hidden
+            if (charts[metricName].element) {
                 charts[metricName].element.style.display = '';
             }
         } else {
@@ -536,7 +531,7 @@ function updateMetricsDisplay(newMetricsData) {
 
             card.appendChild(cardBody);
             col.appendChild(card);
-            
+
             metricsRow.appendChild(col);
 
             const chartInstance = new Chart(canvas.getContext('2d'), {
@@ -620,36 +615,32 @@ function openFullscreenChart(metricName, runData) {
     const modal = new bootstrap.Modal(modalElement);
     document.getElementById('fullscreen-chart-title').textContent = metricName;
 
-    // Hide the original small chart card when opening fullscreen
     if (charts[metricName] && charts[metricName].element) {
         charts[metricName].element.style.display = 'none';
     }
 
     modal.show();
 
-    // Set global variables for the active fullscreen chart
     currentFullscreenMetricName = metricName;
 
-    modalElement.addEventListener('hidden.bs.modal', () => {
-        // Destroy the fullscreen chart instance when modal is hidden
+    modalElement.addEventListener('hidden.bs.modal', async () => {
         if (currentFullscreenChartInstance) {
             currentFullscreenChartInstance.destroy();
-            currentFullscreenChartInstance = null; // Clear reference
+            currentFullscreenChartInstance = null;
         }
-        // Show the original small chart card again
         if (charts[metricName] && charts[metricName].element) {
             charts[metricName].element.style.display = '';
         }
-        // Clear global fullscreen chart references
         currentFullscreenMetricName = null;
-        // Clear the fullscreen container just in case
         const fsContainer = document.getElementById('fullscreen-chart-container');
         if (fsContainer) fsContainer.innerHTML = '';
-    }, { once: true }); // Use { once: true } to auto-remove listener after first hide
 
-    setTimeout(() => {
+        await loadMetrics();
+    }, { once: true });
+
+    setTimeout(async () => {
         const container = document.getElementById('fullscreen-chart-container');
-        container.innerHTML = ''; // Clear any previous chart in container
+        container.innerHTML = '';
 
         const canvas = document.createElement('canvas');
         canvas.id = `fullscreen-chart-${metricName}`;
@@ -670,7 +661,7 @@ function openFullscreenChart(metricName, runData) {
             });
         }
 
-        currentFullscreenChartInstance = new Chart(canvas.getContext('2d'), { // Assign to global variable
+        currentFullscreenChartInstance = new Chart(canvas.getContext('2d'), {
             type: 'line',
             data: { datasets: datasets },
             options: {
@@ -732,6 +723,7 @@ function openFullscreenChart(metricName, runData) {
                 }
             }
         });
+        await loadMetrics();
     }, 400);
 }
 
