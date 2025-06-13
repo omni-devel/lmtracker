@@ -5,7 +5,6 @@ use crate::data::structs::{
     api as api_json, AppState,
     User,
 };
-use serde_json::json;
 
 use crate::database;
 
@@ -160,6 +159,24 @@ pub async fn get_runs(req: HttpRequest, data: web::Json<api_json::GetRunsRequest
                 .json(api_json::OkWithMessageResponse {
                     ok: false,
                     message: e,
+                })
+        }
+    }
+}
+
+#[get("/api/check-user")]
+pub async fn check_user(req: HttpRequest, state: web::Data<AppState>) -> HttpResponse {
+    match check_auth(req, &state.config) {
+        Some(_) => {
+            HttpResponse::Ok()
+                .json(api_json::OkResponse {
+                    ok: true,
+                })
+        },
+        None => {
+            HttpResponse::Unauthorized()
+                .json(api_json::OkResponse {
+                    ok: false,
                 })
         }
     }

@@ -146,4 +146,16 @@ or
 
 ---
 
+#### `GET /api/check-user`
+
+**Request JSON:**  
+_No parameters required._
+
+**Response:**
+```json
+{ "ok": true }
+```
+
+---
+
 > _Track your metrics like a pro. No cloud, no nonsense, just Rusty speed!_
