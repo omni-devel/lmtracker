@@ -4,6 +4,7 @@ let currentProject = null;
 let allRuns = [];
 let selectedRuns = [];
 let charts = {};
+let metricsRefreshIntervalId = null;
 
 const loginContainer = document.getElementById('login-container');
 const mainContainer = document.getElementById('main-container');
@@ -108,12 +109,14 @@ async function handleLogin(event) {
 
 function handleLogout() {
     clearCookieCredentials();
+    stopMetricsAutoRefresh();
     currentUser = null;
     showLogin();
 }
 
 async function loadProjects() {
     showLoading();
+    stopMetricsAutoRefresh();
 
     try {
         const response = await fetchWithAuth('/api/get-projects', {
@@ -225,6 +228,7 @@ async function openProject(projectName) {
             renderRunsList();
             showProjectDetails();
             await loadMetrics();
+            startMetricsAutoRefresh();
         } else {
             alert('Failed to load runs');
             showProjects();
@@ -319,7 +323,9 @@ function deselectAllRuns() {
 
 async function applyRunsSelection() {
     showLoading();
+    stopMetricsAutoRefresh();
     await loadMetrics();
+    startMetricsAutoRefresh();
     hideLoading();
 
     const dropdownEl = document.getElementById('runsDropdown');
@@ -330,10 +336,17 @@ async function applyRunsSelection() {
 }
 
 async function loadMetrics() {
-    metricsContainer.innerHTML = '';
-    charts = {};
-
     if (selectedRuns.length === 0) {
+        stopMetricsAutoRefresh();
+        for (const metricName in charts) {
+            if (charts[metricName] && charts[metricName].instance) {
+                charts[metricName].instance.destroy();
+            }
+            if (charts[metricName] && charts[metricName].element) {
+                charts[metricName].element.remove();
+            }
+        }
+        charts = {};
         metricsContainer.innerHTML = '<div class="alert alert-warning">Select at least one run to display the metrics.</div>';
         return;
     }
@@ -380,59 +393,163 @@ async function loadMetrics() {
         }
     }
 
-    renderMetricsCharts(metricsData);
+    updateMetricsDisplay(metricsData);
 }
 
-function renderMetricsCharts(metricsData) {
-    if (Object.keys(metricsData).length === 0) {
+function updateMetricsDisplay(newMetricsData) {
+    let metricsRow = document.getElementById('metrics-row');
+    if (!metricsRow) {
+        metricsRow = document.createElement('div');
+        metricsRow.className = 'row';
+        metricsRow.id = 'metrics-row';
+        metricsContainer.innerHTML = '';
+        metricsContainer.appendChild(metricsRow);
+    }
+
+    const existingMetricNames = Object.keys(charts);
+    const newMetricNames = Object.keys(newMetricsData);
+
+    for (const metricName of existingMetricNames) {
+        if (!newMetricNames.includes(metricName)) {
+            if (charts[metricName] && charts[metricName].instance) {
+                charts[metricName].instance.destroy();
+            }
+            if (charts[metricName] && charts[metricName].element) {
+                charts[metricName].element.remove();
+            }
+            delete charts[metricName];
+        }
+    }
+
+    if (newMetricNames.length === 0) {
+        metricsRow.innerHTML = '';
         metricsContainer.innerHTML = '<div class="alert alert-info">There are no available metrics for selected runs</div>';
+        charts = {};
         return;
     }
 
-    const row = document.createElement('div');
-    row.className = 'row';
+    for (const [metricName, runData] of Object.entries(newMetricsData)) {
+        const datasets = [];
+        for (const [runName, dataPoints] of Object.entries(runData)) {
+            const color = stringToColor(runName);
+            datasets.push({
+                label: runName,
+                data: dataPoints,
+                borderColor: color,
+                backgroundColor: color.replace('50%', '80%').replace('hsl', 'hsla').replace(')', ',0.2)'),
+                borderWidth: 2,
+                tension: 0.1,
+                pointRadius: 3,
+                pointHoverRadius: 5
+            });
+        }
 
-    for (const [metricName, runData] of Object.entries(metricsData)) {
-        const col = document.createElement('div');
-        col.className = 'col-md-6 col-lg-4 metric-card';
+        if (charts[metricName]) {
+            charts[metricName].instance.data.datasets = datasets;
+            charts[metricName].instance.update();
+        } else {
+            const col = document.createElement('div');
+            col.className = 'col-md-6 col-lg-4 metric-card';
 
-        const card = document.createElement('div');
-        card.className = 'card h-100';
+            const card = document.createElement('div');
+            card.className = 'card h-100';
 
-        const cardBody = document.createElement('div');
-        cardBody.className = 'card-body';
+            const cardBody = document.createElement('div');
+            cardBody.className = 'card-body';
 
-        const cardTitle = document.createElement('h5');
-        cardTitle.className = 'card-title text-orange mb-3';
-        cardTitle.textContent = metricName;
+            const cardTitle = document.createElement('h5');
+            cardTitle.className = 'card-title text-orange mb-3';
+            cardTitle.textContent = metricName;
 
-        const chartContainer = document.createElement('div');
-        chartContainer.className = 'chart-container';
+            const chartContainer = document.createElement('div');
+            chartContainer.className = 'chart-container';
 
-        const canvas = document.createElement('canvas');
-        canvas.id = `chart-${metricName}`;
+            const canvas = document.createElement('canvas');
+            canvas.id = `chart-${metricName}`;
 
-        const fullscreenBtn = document.createElement('button');
-        fullscreenBtn.className = 'fullscreen-btn';
-        fullscreenBtn.innerHTML = '<i class="bi bi-fullscreen"></i>';
-        fullscreenBtn.addEventListener('click', () => {
-            openFullscreenChart(metricName, runData);
-        });
+            const fullscreenBtn = document.createElement('button');
+            fullscreenBtn.className = 'fullscreen-btn';
+            fullscreenBtn.innerHTML = '<i class="bi bi-fullscreen"></i>';
+            fullscreenBtn.addEventListener('click', () => {
+                openFullscreenChart(metricName, newMetricsData[metricName]);
+            });
 
-        chartContainer.appendChild(canvas);
-        chartContainer.appendChild(fullscreenBtn);
+            chartContainer.appendChild(canvas);
+            chartContainer.appendChild(fullscreenBtn);
 
-        cardBody.appendChild(cardTitle);
-        cardBody.appendChild(chartContainer);
+            cardBody.appendChild(cardTitle);
+            cardBody.appendChild(chartContainer);
 
-        card.appendChild(cardBody);
-        col.appendChild(card);
-        row.appendChild(col);
+            card.appendChild(cardBody);
+            col.appendChild(card);
+            
+            metricsRow.appendChild(col);
 
-        createChart(canvas, metricName, runData);
+            const chartInstance = new Chart(canvas.getContext('2d'), {
+                type: 'line',
+                data: { datasets },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    animation: false,
+                    scales: {
+                        x: {
+                            type: 'linear',
+                            title: {
+                                display: true,
+                                text: 'Step',
+                                color: '#9e9e9e'
+                            },
+                            grid: {
+                                color: '#2d2d2d'
+                            },
+                            ticks: {
+                                color: '#9e9e9e'
+                            }
+                        },
+                        y: {
+                            title: {
+                                display: true,
+                                text: metricName,
+                                color: '#9e9e9e'
+                            },
+                            grid: {
+                                color: '#2d2d2d'
+                            },
+                            ticks: {
+                                color: '#9e9e9e'
+                            }
+                        }
+                    },
+                    plugins: {
+                        tooltip: {
+                            mode: 'index',
+                            intersect: false,
+                            backgroundColor: '#1e1e1e',
+                            titleColor: '#ff8a00',
+                            bodyColor: '#bdbdbd',
+                            borderColor: '#2d2d2d',
+                            borderWidth: 1
+                        },
+                        legend: {
+                            position: 'top',
+                            labels: {
+                                color: '#9e9e9e',
+                                usePointStyle: true,
+                                padding: 20
+                            }
+                        }
+                    },
+                    interaction: {
+                        mode: 'nearest',
+                        axis: 'x',
+                        intersect: false
+                    }
+                }
+            });
+            charts[metricName] = { instance: chartInstance, element: col };
+        }
     }
-
-    metricsContainer.appendChild(row);
 }
 
 function stringToColor(str) {
@@ -442,89 +559,6 @@ function stringToColor(str) {
     }
     const h = Math.abs(hash) % 360;
     return `hsl(${h}, 80%, 50%)`;
-}
-
-function createChart(canvas, metricName, runData) {
-    const ctx = canvas.getContext('2d');
-    const datasets = [];
-
-    for (const [runName, dataPoints] of Object.entries(runData)) {
-        const color = stringToColor(runName);
-        datasets.push({
-            label: runName,
-            data: dataPoints,
-            borderColor: color,
-            backgroundColor: color.replace('50%', '80%').replace('hsl', 'hsla').replace(')', ',0.2)'),
-            borderWidth: 2,
-            tension: 0.1,
-            pointRadius: 3,
-            pointHoverRadius: 5
-        });
-    }
-
-    const chart = new Chart(ctx, {
-        type: 'line',
-        data: { datasets },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            scales: {
-                x: {
-                    type: 'linear',
-                    title: {
-                        display: true,
-                        text: 'Step',
-                        color: '#9e9e9e'
-                    },
-                    grid: {
-                        color: '#2d2d2d'
-                    },
-                    ticks: {
-                        color: '#9e9e9e'
-                    }
-                },
-                y: {
-                    title: {
-                        display: true,
-                        text: metricName,
-                        color: '#9e9e9e'
-                    },
-                    grid: {
-                        color: '#2d2d2d'
-                    },
-                    ticks: {
-                        color: '#9e9e9e'
-                    }
-                }
-            },
-            plugins: {
-                tooltip: {
-                    mode: 'index',
-                    intersect: false,
-                    backgroundColor: '#1e1e1e',
-                    titleColor: '#ff8a00',
-                    bodyColor: '#bdbdbd',
-                    borderColor: '#2d2d2d',
-                    borderWidth: 1
-                },
-                legend: {
-                    position: 'top',
-                    labels: {
-                        color: '#9e9e9e',
-                        usePointStyle: true,
-                        padding: 20
-                    }
-                }
-            },
-            interaction: {
-                mode: 'nearest',
-                axis: 'x',
-                intersect: false
-            }
-        }
-    });
-
-    charts[metricName] = chart;
 }
 
 function openFullscreenChart(metricName, runData) {
@@ -541,7 +575,83 @@ function openFullscreenChart(metricName, runData) {
         canvas.id = `fullscreen-chart-${metricName}`;
         container.appendChild(canvas);
 
-        createChart(canvas, metricName, runData);
+        const datasets = [];
+        for (const [runName, dataPoints] of Object.entries(runData)) {
+            const color = stringToColor(runName);
+            datasets.push({
+                label: runName,
+                data: dataPoints,
+                borderColor: color,
+                backgroundColor: color.replace('50%', '80%').replace('hsl', 'hsla').replace(')', ',0.2)'),
+                borderWidth: 2,
+                tension: 0.1,
+                pointRadius: 3,
+                pointHoverRadius: 5
+            });
+        }
+
+        const chartInstance = new Chart(canvas.getContext('2d'), {
+            type: 'line',
+            data: { datasets: datasets },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: false,
+                scales: {
+                    x: {
+                        type: 'linear',
+                        title: {
+                            display: true,
+                            text: 'Step',
+                            color: '#9e9e9e'
+                        },
+                        grid: {
+                            color: '#2d2d2d'
+                        },
+                        ticks: {
+                            color: '#9e9e9e'
+                        }
+                    },
+                    y: {
+                        title: {
+                            display: true,
+                            text: metricName,
+                            color: '#9e9e9e'
+                        },
+                        grid: {
+                            color: '#2d2d2d'
+                        },
+                        ticks: {
+                            color: '#9e9e9e'
+                        }
+                    }
+                },
+                plugins: {
+                    tooltip: {
+                        mode: 'index',
+                        intersect: false,
+                        backgroundColor: '#1e1e1e',
+                        titleColor: '#ff8a00',
+                        bodyColor: '#bdbdbd',
+                        borderColor: '#2d2d2d',
+                        borderWidth: 1
+                    },
+                    legend: {
+                        position: 'top',
+                        labels: {
+                            color: '#9e9e9e',
+                            usePointStyle: true,
+                            padding: 20
+                        }
+                    }
+                },
+                interaction: {
+                    mode: 'nearest',
+                    axis: 'x',
+                    intersect: false
+                }
+            }
+        });
     }, 400);
 }
 
@@ -566,6 +676,7 @@ function showMain() {
 }
 
 function showProjects() {
+    stopMetricsAutoRefresh();
     projectsView.classList.remove('d-none');
     projectDetails.classList.add('d-none');
 }
@@ -635,6 +746,7 @@ async function deleteRun(runName) {
         return;
     }
     showLoading();
+    stopMetricsAutoRefresh();
     try {
         const response = await fetchWithAuth('/api/delete-run', {
             method: 'POST',
@@ -659,5 +771,48 @@ async function deleteRun(runName) {
         alert('Deleting run error');
     } finally {
         hideLoading();
+        startMetricsAutoRefresh();
+    }
+}
+
+function startMetricsAutoRefresh() {
+    if (metricsRefreshIntervalId) {
+        clearInterval(metricsRefreshIntervalId);
+    }
+    metricsRefreshIntervalId = setInterval(async () => {
+        if (currentProject) {
+            await loadMetrics();
+            const response = await fetchWithAuth('/api/get-runs', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ project_name: currentProject })
+            });
+            if (response.ok) {
+                const data = await response.json();
+                const newAllRuns = data.runs || [];
+                if (JSON.stringify(allRuns.map(r => r.name)) !== JSON.stringify(newAllRuns.map(r => r.name))) {
+                    allRuns = newAllRuns;
+                    const newSelectedRuns = [];
+                    for (const run of allRuns) {
+                        if (selectedRuns.some(r => r.name === run.name)) {
+                            newSelectedRuns.push(run);
+                        }
+                    }
+                    selectedRuns = newSelectedRuns;
+                    renderRunsList();
+                }
+            } else {
+                console.error('Failed to auto-refresh runs list:', response.statusText);
+            }
+        }
+    }, 15000);
+}
+
+function stopMetricsAutoRefresh() {
+    if (metricsRefreshIntervalId) {
+        clearInterval(metricsRefreshIntervalId);
+        metricsRefreshIntervalId = null;
     }
 }
