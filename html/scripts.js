@@ -42,6 +42,10 @@ function setupEventListeners() {
     document.getElementById('deselect-all-runs').addEventListener('click', deselectAllRuns);
     document.getElementById('apply-runs-selection').addEventListener('click', applyRunsSelection);
     runsSearch.addEventListener('input', filterRuns);
+
+    document.getElementById('runs-dropdown').addEventListener('click', function (e) {
+        e.stopPropagation();
+    });
 }
 
 async function checkAuthentication() {
@@ -627,7 +631,7 @@ async function fetchWithAuth(url, options = {}, username = null, password = null
 }
 
 async function deleteRun(runName) {
-    if (!confirm(`Удалить run "${runName}"? Это действие необратимо!`)) {
+    if (!confirm(`Are you sure you want to delete run "${runName}"? This action is irreversible!`)) {
         return;
     }
     showLoading();
