@@ -64,5 +64,6 @@ async fn run_web_server(config: Config) {
             .service(handlers::api::get_projects)
             .service(handlers::api::get_runs)
             .service(handlers::api::check_user)
+            .service(handlers::api::delete_run)
     }).bind((addr, port)).unwrap().run().await.unwrap();
 }

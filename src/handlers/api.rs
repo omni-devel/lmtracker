@@ -132,6 +132,34 @@ pub async fn get_run(req: HttpRequest, data: web::Json<api_json::GetRunRequest>,
     }
 }
 
+#[post("/api/delete-run")]
+pub async fn delete_run(req: HttpRequest, data: web::Json<api_json::GetRunRequest>, state: web::Data<AppState>) -> HttpResponse {
+    let auth_data = match check_auth(req, &state.config) {
+        Some(d) => d,
+        None => {
+            return HttpResponse::Unauthorized()
+                .json(api_json::OkResponse {
+                    ok: false,
+                });
+        }
+    };
+
+    if INVALID_NAME_CHARS.iter().any(|s| data.project_name.contains(*s) || data.run_name.contains(*s)) {
+        return HttpResponse::BadRequest()
+            .json(api_json::OkWithMessageResponse {
+                ok: false,
+                message: String::from("Invalid name"),
+            });
+    }
+
+    database::delete_run(&auth_data.name, &data.project_name, &data.run_name).await;
+
+    HttpResponse::Ok()
+        .json(api_json::OkResponse {
+            ok: true,
+        })
+}
+
 #[post("/api/get-projects")]
 pub async fn get_projects(req: HttpRequest, state: web::Data<AppState>) -> HttpResponse {
     let auth_data = match check_auth(req, &state.config) {

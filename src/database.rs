@@ -22,6 +22,12 @@ pub async fn create_project(user_name: &String, project_name: &String) {
     ).await;
 }
 
+pub async fn delete_run(user_name: &String, project_name: &String, run_name: &String) {
+    let _ = fs::remove_file(
+        format!("./database/{}/{}/{}.jsonl", user_name, project_name, run_name)
+    ).await;
+}
+
 pub async fn write_metrics(
     user_name: &String,
     project_name: &String,

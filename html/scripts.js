@@ -250,12 +250,17 @@ function renderRunsList() {
         const runItem = document.createElement('div');
         runItem.className = 'run-item';
         runItem.innerHTML = `
-            <div class="form-check">
-                <input class="form-check-input" type="checkbox" value="${run.name}" id="run-${run.name}" ${isSelected ? 'checked' : ''}>
-                <label class="form-check-label d-flex justify-content-between" for="run-${run.name}">
-                    <span>${run.name}</span>
-                    <small class="text-muted">${formattedDate}</small>
-                </label>
+            <div class="form-check d-flex align-items-center justify-content-between">
+                <div>
+                    <input class="form-check-input" type="checkbox" value="${run.name}" id="run-${run.name}" ${isSelected ? 'checked' : ''}>
+                    <label class="form-check-label" for="run-${run.name}">
+                        <span>${run.name}</span>
+                        <small class="text-muted ms-2">${formattedDate}</small>
+                    </label>
+                </div>
+                <button class="delete-run-btn" title="Delete run">
+                    <i class="bi bi-trash"></i>
+                </button>
             </div>
         `;
 
@@ -267,6 +272,11 @@ function renderRunsList() {
             } else {
                 selectedRuns = selectedRuns.filter(r => r.name !== run.name);
             }
+        });
+
+        runItem.querySelector('.delete-run-btn').addEventListener('click', (e) => {
+            e.stopPropagation();
+            deleteRun(run.name);
         });
 
         runsList.appendChild(runItem);
@@ -614,4 +624,36 @@ async function fetchWithAuth(url, options = {}, username = null, password = null
         ...options,
         headers
     });
+}
+
+async function deleteRun(runName) {
+    if (!confirm(`Удалить run "${runName}"? Это действие необратимо!`)) {
+        return;
+    }
+    showLoading();
+    try {
+        const response = await fetchWithAuth('/api/delete-run', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                project_name: currentProject,
+                run_name: runName
+            })
+        });
+        if (response.ok) {
+            allRuns = allRuns.filter(r => r.name !== runName);
+            selectedRuns = selectedRuns.filter(r => r.name !== runName);
+            renderRunsList();
+            await loadMetrics();
+        } else {
+            alert('Failed to delete run');
+        }
+    } catch (error) {
+        console.error('Deleting run error:', error);
+        alert('Deleting run error');
+    } finally {
+        hideLoading();
+    }
 }

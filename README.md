@@ -102,6 +102,26 @@ or
 
 ---
 
+#### `POST /api/delete-run`
+
+**Request JSON:**
+```json
+{
+  "project_name": "String",
+  "run_name": "String"
+}
+```
+**Response:**
+```json
+{ "ok": true, "message": "String" }
+```
+or
+```json
+{ "ok": true }
+```
+
+---
+
 #### `POST /api/get-projects`
 
 **Request JSON:**  
