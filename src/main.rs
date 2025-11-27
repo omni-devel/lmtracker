@@ -1,15 +1,15 @@
-pub mod handlers;
-pub mod database;
 pub mod data;
+pub mod database;
+pub mod handlers;
 
 use data::structs::{AppState, Config, User};
 
 use std::{io::Write, process::ExitCode};
 
-use tokio::fs;
 use std::io;
+use tokio::fs;
 
-use actix_web::{App, web, HttpServer};
+use actix_web::{App, HttpServer, web};
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -39,7 +39,7 @@ async fn main() -> ExitCode {
 
                             continue;
                         }
-                    },
+                    }
                     Err(e) => {
                         eprintln!("Incorrect value: {}", e);
 
@@ -57,45 +57,47 @@ async fn main() -> ExitCode {
                     println!("name: {}", name);
                     println!("password: {}", password);
 
-                    config.users.push(User {
-                        name,
-                        password,
-                    });
+                    config.users.push(User { name, password });
                 }
 
-                fs::write("config.yml", serde_yaml::to_string(&config).unwrap()).await.unwrap();
+                fs::write("config.yml", serde_yaml::to_string(&config).unwrap())
+                    .await
+                    .unwrap();
 
                 break;
             }
         } else {
-            eprintln!("Please, create and fill a config file `config.yml`. Example config: `config.yml.sample`!");
+            eprintln!(
+                "Please, create and fill a config file `config.yml`. Example config: `config.yml.sample`!"
+            );
 
             return ExitCode::from(1);
         }
     }
 
     let config = match fs::read_to_string("config.yml").await {
-        Ok(c) => {
-            match serde_yaml::from_str::<Config>(&c) {
-                Ok(config) => {
-                    for user in config.users.iter() {
-                        match user.clone().verify() {
-                            Ok(_) => { },
-                            Err(e) => {
-                                eprintln!("User `{}` error: {}. Please, fix the `config.yml` file", user.name, e);
+        Ok(c) => match serde_yaml::from_str::<Config>(&c) {
+            Ok(config) => {
+                for user in config.users.iter() {
+                    match user.clone().verify() {
+                        Ok(_) => {}
+                        Err(e) => {
+                            eprintln!(
+                                "User `{}` error: {}. Please, fix the `config.yml` file",
+                                user.name, e
+                            );
 
-                                return ExitCode::from(1);
-                            }
-                        };
-                    }
-
-                    config
-                },
-                Err(_) => {
-                    eprintln!("Incorrect `config.yml` config file!");
-
-                    return ExitCode::from(1);
+                            return ExitCode::from(1);
+                        }
+                    };
                 }
+
+                config
+            }
+            Err(_) => {
+                eprintln!("Incorrect `config.yml` config file!");
+
+                return ExitCode::from(1);
             }
         },
         Err(_) => {
@@ -126,11 +128,17 @@ async fn run_web_server(config: Config) {
             .service(handlers::app::styles)
             .service(handlers::app::scripts)
             .service(handlers::api::create_project)
+            .service(handlers::api::delete_project)
             .service(handlers::api::push_metrics)
             .service(handlers::api::get_run)
             .service(handlers::api::get_projects)
             .service(handlers::api::get_runs)
             .service(handlers::api::check_user)
             .service(handlers::api::delete_run)
-    }).bind((addr, port)).unwrap().run().await.unwrap();
+    })
+    .bind((addr, port))
+    .unwrap()
+    .run()
+    .await
+    .unwrap();
 }

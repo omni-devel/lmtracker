@@ -1,890 +1,821 @@
-const API_BASE_URL = '';
-let currentUser = null;
-let currentProject = null;
-let allRuns = [];
-let selectedRuns = [];
-let charts = {};
-let metricsRefreshIntervalId = null;
+const API_BASE_URL = "";
+const REFRESH_INTERVAL_MS = 10000;
+const METRICS_INTERVAL_MS = 5000;
 
-let currentFullscreenChartInstance = null;
-let currentFullscreenMetricName = null;
+const state = {
+    user: null,
+    currentProject: null,
+    allRuns: [],
+    selectedRunNames: new Set(),
+    metricsData: {},
+    charts: {},
+    intervals: {
+        runs: null,
+        metrics: null,
+    },
+    fullscreenMetric: null,
+    fullscreenChart: null,
+};
 
-const loginContainer = document.getElementById('login-container');
-const mainContainer = document.getElementById('main-container');
-const loadingContainer = document.getElementById('loading-container');
-const loginForm = document.getElementById('login-form');
-const userInfoElement = document.getElementById('user-info');
-const projectsList = document.getElementById('projects-list');
-const projectsView = document.getElementById('projects-view');
-const projectDetails = document.getElementById('project-details');
-const projectNameElement = document.getElementById('project-name');
-const metricsContainer = document.getElementById('metrics-container');
-const runsList = document.getElementById('runs-list');
-const runsSearch = document.getElementById('runs-search');
+const DOM = {
+    app: document.getElementById("app"),
+    navbar: document.getElementById("navbar"),
+    views: {
+        login: document.getElementById("view-login"),
+        projects: document.getElementById("view-projects"),
+        dashboard: document.getElementById("view-dashboard"),
+    },
+    forms: {
+        login: document.getElementById("form-login"),
+        newProject: document.getElementById("form-new-project"),
+    },
+    inputs: {
+        username: document.getElementById("input-username"),
+        password: document.getElementById("input-password"),
+        projectName: document.getElementById("input-project-name"),
+        runsSearch: document.getElementById("search-runs"),
+    },
+    containers: {
+        projectsGrid: document.getElementById("projects-grid"),
+        runsList: document.getElementById("runs-list-container"),
+        charts: document.getElementById("charts-container"),
+        toast: document.querySelector(".toast-container"),
+    },
+    buttons: {
+        logout: document.getElementById("btn-logout"),
+        backProjects: document.getElementById("btn-back-projects"),
+        selectAll: document.getElementById("btn-select-all"),
+        selectNone: document.getElementById("btn-select-none"),
+    },
+    overlay: document.getElementById("loading-overlay"),
+    userDisplay: document.getElementById("user-display"),
+    projectNameDisplay: document.getElementById("current-project-name"),
+    modals: {
+        newProject: new bootstrap.Modal(
+            document.getElementById("modal-new-project"),
+        ),
+        fullscreen: new bootstrap.Modal(
+            document.getElementById("modal-fullscreen"),
+        ),
+    },
+};
 
-document.addEventListener('DOMContentLoaded', init);
-
-async function init() {
+document.addEventListener("DOMContentLoaded", async () => {
     setupEventListeners();
-    await checkAuthentication();
-    hideLoading();
-}
+    await checkAuth();
+});
 
 function setupEventListeners() {
-    loginForm.addEventListener('submit', handleLogin);
-    document.getElementById('logout-btn').addEventListener('click', handleLogout);
+    DOM.forms.login.addEventListener("submit", handleLogin);
+    DOM.buttons.logout.addEventListener("click", handleLogout);
+    DOM.forms.newProject.addEventListener("submit", handleCreateProject);
+    DOM.buttons.backProjects.addEventListener("click", showProjectsView);
 
-    document.getElementById('projects-link').addEventListener('click', showProjects);
+    const navProjects = document.getElementById("nav-projects");
+    if (navProjects) {
+        navProjects.addEventListener("click", (e) => {
+            e.preventDefault();
+            showProjectsView();
 
-    document.getElementById('new-project-btn').addEventListener('click', () => {
-        const modal = new bootstrap.Modal(document.getElementById('new-project-modal'));
-        modal.show();
+            const navToggler = document.querySelector(".navbar-toggler");
+            const navContent = document.getElementById("navContent");
+            if (
+                window.getComputedStyle(navToggler).display !== "none" &&
+                navContent.classList.contains("show")
+            ) {
+                navToggler.click();
+            }
+        });
+    }
+
+    DOM.buttons.selectAll.addEventListener("click", () => {
+        const searchTerm = DOM.inputs.runsSearch.value.toLowerCase();
+        state.allRuns.forEach((r) => {
+            if (!searchTerm || r.name.toLowerCase().includes(searchTerm)) {
+                state.selectedRunNames.add(r.name);
+            }
+        });
+        renderRunsList();
+        fetchAndRenderMetrics();
     });
-    document.getElementById('create-project-btn').addEventListener('click', createProject);
 
-    document.getElementById('select-all-runs').addEventListener('click', selectAllRuns);
-    document.getElementById('deselect-all-runs').addEventListener('click', deselectAllRuns);
-    document.getElementById('apply-runs-selection').addEventListener('click', applyRunsSelection);
-    runsSearch.addEventListener('input', filterRuns);
-
-    document.getElementById('runs-dropdown').addEventListener('click', function (e) {
-        e.stopPropagation();
+    DOM.buttons.selectNone.addEventListener("click", () => {
+        state.selectedRunNames.clear();
+        renderRunsList();
+        renderCharts();
     });
+    DOM.inputs.runsSearch.addEventListener("input", renderRunsList);
+
+    document
+        .getElementById("modal-fullscreen")
+        .addEventListener("hidden.bs.modal", () => {
+            if (state.fullscreenChart) {
+                state.fullscreenChart.destroy();
+                state.fullscreenChart = null;
+            }
+            state.fullscreenMetric = null;
+        });
 }
 
-async function checkAuthentication() {
-    const credentials = getCookieCredentials();
+function getAuthHeaders() {
+    const creds = getCookieCredentials();
+    if (!creds) return {};
+    return { Authorization: `${creds.username}:${creds.password}` };
+}
 
-    if (!credentials) {
-        showLogin();
+async function apiCall(endpoint, method = "GET", body = null) {
+    const headers = {
+        "Content-Type": "application/json",
+        ...getAuthHeaders(),
+    };
+
+    const options = { method, headers };
+    if (body) options.body = JSON.stringify(body);
+
+    try {
+        const response = await fetch(API_BASE_URL + endpoint, options);
+        if (response.status === 401) {
+            handleLogout();
+            throw new Error("Unauthorized");
+        }
+        return response;
+    } catch (error) {
+        console.error("API Error:", error);
+        throw error;
+    }
+}
+
+async function checkAuth() {
+    const creds = getCookieCredentials();
+    if (!creds) {
+        showLoginView();
         return;
     }
 
+    setLoading(true);
     try {
-        const response = await fetchWithAuth('/api/check-user', {
-            method: 'GET'
-        }, credentials.username, credentials.password);
-
-        if (response.ok) {
-            currentUser = credentials.username;
-            userInfoElement.textContent = `User: ${currentUser}`;
-            showMain();
-            loadProjects();
+        const res = await apiCall("/api/check-user");
+        if (res.ok) {
+            state.user = creds.username;
+            DOM.userDisplay.textContent = state.user;
+            showProjectsView();
         } else {
-            showLogin();
+            showLoginView();
         }
-    } catch (error) {
-        console.error('Authentication error:', error);
-        showLogin();
+    } catch (e) {
+        showLoginView();
+    } finally {
+        setLoading(false);
     }
 }
 
-async function handleLogin(event) {
-    event.preventDefault();
+async function handleLogin(e) {
+    e.preventDefault();
+    const user = DOM.inputs.username.value;
+    const pass = DOM.inputs.password.value;
 
-    const username = document.getElementById('username').value;
-    const password = document.getElementById('password').value;
-
-    showLoading();
+    setLoading(true);
+    document.cookie = `lmt_username=${encodeURIComponent(user)}; path=/; SameSite=Strict`;
+    document.cookie = `lmt_password=${encodeURIComponent(pass)}; path=/; SameSite=Strict`;
 
     try {
-        const response = await fetchWithAuth('/api/check-user', {
-            method: 'GET'
-        }, username, password);
-
-        if (response.ok) {
-            setCookieCredentials(username, password);
-            currentUser = username;
-            userInfoElement.textContent = `User: ${currentUser}`;
-            showMain();
-            loadProjects();
+        const res = await apiCall("/api/check-user");
+        if (res.ok) {
+            setCookieCredentials(user, pass);
+            state.user = user;
+            DOM.userDisplay.textContent = user;
+            DOM.forms.login.reset();
+            showProjectsView();
         } else {
-            alert('Incorrect username or password');
-            hideLoading();
-            showLogin();
+            showToast("Login failed", "Invalid credentials", "danger");
+            clearCookieCredentials();
         }
-    } catch (error) {
-        console.error('Authentication error:', error);
-        alert('Authentication error');
-        hideLoading();
+    } catch (err) {
+        showToast("Error", "Network error", "danger");
+        clearCookieCredentials();
+    } finally {
+        setLoading(false);
     }
 }
 
 function handleLogout() {
     clearCookieCredentials();
-    stopMetricsAutoRefresh();
-    currentUser = null;
-    showLogin();
+    stopAutoRefresh();
+    state.user = null;
+    showLoginView();
 }
 
 async function loadProjects() {
-    showLoading();
-    stopMetricsAutoRefresh();
-
+    setLoading(true);
     try {
-        const response = await fetchWithAuth('/api/get-projects', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({})
-        });
-
-        if (response.ok) {
-            const data = await response.json();
-            renderProjects(data.projects);
-        } else {
-            alert('Failed to load projects');
+        const res = await apiCall("/api/get-projects", "POST", {});
+        if (res.ok) {
+            const data = await res.json();
+            const projects = (data.projects || []).sort(
+                (a, b) => b.modified_at - a.modified_at,
+            );
+            renderProjects(projects);
         }
-    } catch (error) {
-        console.error('Projects loading error:', error);
-        alert('Projects loading error');
+    } catch (e) {
+        showToast("Error", "Failed to load projects", "danger");
     } finally {
-        hideLoading();
+        setLoading(false);
     }
 }
 
 function renderProjects(projects) {
-    projectsList.innerHTML = '';
-
+    DOM.containers.projectsGrid.innerHTML = "";
     if (projects.length === 0) {
-        projectsList.innerHTML = '<div class="col-12"><p class="text-center">There are no available projects</p></div>';
+        DOM.containers.projectsGrid.innerHTML =
+            '<div class="col-12 text-center text-muted">No projects found.</div>';
         return;
     }
 
-    projects.forEach(project => {
-        const date = new Date(project.modified_at * 1000);
-        const formattedDate = date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
-
-        const projectCard = document.createElement('div');
-        projectCard.className = 'col-md-4 col-lg-3 mb-4';
-        projectCard.innerHTML = `
-            <div class="card project-card h-100">
-                <div class="card-body">
-                    <h5 class="card-title text-orange">${project.name}</h5>
-                    <p class="card-text text-muted">Modified: ${formattedDate}</p>
+    projects.forEach((p) => {
+        const date = new Date(p.modified_at * 1000).toLocaleString();
+        const col = document.createElement("div");
+        col.className = "col-md-4 col-lg-3";
+        col.innerHTML = `
+            <div class="card project-card h-100 p-3 position-relative">
+                <div class="d-flex justify-content-between align-items-start mb-2">
+                    <h5 class="text-white m-0 text-truncate pe-2">${escapeHtml(p.name)}</h5>
+                    <button class="btn btn-link btn-sm p-0 text-danger delete-project-btn" style="z-index: 2;" title="Delete Project">
+                        <i class="bi bi-trash"></i>
+                    </button>
                 </div>
+                <small class="text-secondary">Modified: ${date}</small>
             </div>
         `;
-
-        projectCard.querySelector('.project-card').addEventListener('click', () => {
-            openProject(project.name);
-        });
-
-        projectsList.appendChild(projectCard);
+        col.querySelector(".card").addEventListener("click", () =>
+            openProject(p.name),
+        );
+        col.querySelector(".delete-project-btn").addEventListener(
+            "click",
+            (e) => {
+                e.stopPropagation();
+                deleteProject(p.name);
+            },
+        );
+        DOM.containers.projectsGrid.appendChild(col);
     });
 }
 
-async function createProject() {
-    const projectName = document.getElementById('project-name-input').value.trim();
-
-    if (!projectName) {
-        alert('Enter project name');
-        return;
-    }
-
-    showLoading();
+async function handleCreateProject(e) {
+    e.preventDefault();
+    const name = DOM.inputs.projectName.value.trim();
+    if (!name) return;
 
     try {
-        const response = await fetchWithAuth('/api/create-project', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ name: projectName })
-        });
+        const res = await apiCall("/api/create-project", "POST", { name });
+        if (res.ok) {
+            DOM.modals.newProject.hide();
+            DOM.inputs.projectName.value = "";
+            loadProjects();
+            showToast("Success", "Project created", "success");
+        } else {
+            showToast("Error", "Failed to create project", "danger");
+        }
+    } catch (e) {
+        showToast("Error", "Network error", "danger");
+    }
+}
 
-        if (response.ok) {
-            bootstrap.Modal.getInstance(document.getElementById('new-project-modal')).hide();
-            document.getElementById('project-name-input').value = '';
+async function deleteProject(name) {
+    if (
+        !confirm(
+            `Are you sure you want to delete project "${name}"? All runs will be lost.`,
+        )
+    )
+        return;
+
+    setLoading(true);
+    try {
+        const res = await apiCall("/api/delete-project", "POST", { name });
+        if (res.ok) {
+            showToast("Deleted", "Project deleted", "success");
             loadProjects();
         } else {
-            alert('Failed to create project');
+            showToast("Error", "Failed to delete project", "danger");
         }
-    } catch (error) {
-        console.error('Project creation error:', error);
-        alert('Failed to create project');
+    } catch (e) {
+        showToast("Error", "Network error", "danger");
     } finally {
-        hideLoading();
+        setLoading(false);
     }
 }
 
 async function openProject(projectName) {
-    showLoading();
-    currentProject = projectName;
-    projectNameElement.textContent = projectName;
+    state.currentProject = projectName;
+    DOM.projectNameDisplay.textContent = projectName;
+    state.selectedRunNames.clear();
+    state.metricsData = {};
+
+    Object.values(state.charts).forEach((chart) => chart.destroy());
+    state.charts = {};
+    DOM.containers.charts.innerHTML = "";
+
+    showDashboardView();
+    await fetchRuns(false);
+    startAutoRefresh();
+}
+
+async function fetchRuns(isAutoRefresh = false) {
+    if (!state.currentProject) return;
 
     try {
-        const response = await fetchWithAuth('/api/get-runs', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ project_name: projectName })
+        const res = await apiCall("/api/get-runs", "POST", {
+            project_name: state.currentProject,
         });
+        if (res.ok) {
+            const data = await res.json();
+            let newRuns = data.runs || [];
 
-        if (response.ok) {
-            const data = await response.json();
-            allRuns = data.runs || [];
-            selectedRuns = [...allRuns];
+            newRuns.sort((a, b) => b.modified_at - a.modified_at);
 
-            renderRunsList();
-            showProjectDetails();
-            await loadMetrics();
-            startMetricsAutoRefresh();
-        } else {
-            alert('Failed to load runs');
-            showProjects();
+            const runsChanged =
+                JSON.stringify(newRuns.map((r) => r.name)) !==
+                JSON.stringify(state.allRuns.map((r) => r.name));
+
+            if (runsChanged || !isAutoRefresh) {
+                state.allRuns = newRuns;
+
+                if (
+                    !isAutoRefresh &&
+                    state.selectedRunNames.size === 0 &&
+                    newRuns.length > 0
+                ) {
+                    newRuns
+                        .slice(0, 10)
+                        .forEach((r) => state.selectedRunNames.add(r.name));
+                }
+
+                const runNames = new Set(state.allRuns.map((r) => r.name));
+                for (const selected of state.selectedRunNames) {
+                    if (!runNames.has(selected))
+                        state.selectedRunNames.delete(selected);
+                }
+
+                renderRunsList();
+
+                if (!isAutoRefresh) {
+                    fetchAndRenderMetrics();
+                }
+            }
         }
-    } catch (error) {
-        console.error('Project opening error:', error);
-        alert('Project opening error');
-        showProjects();
-    } finally {
-        hideLoading();
+    } catch (e) {
+        console.error("Failed to fetch runs", e);
     }
 }
 
 function renderRunsList() {
-    runsList.innerHTML = '';
+    const container = DOM.containers.runsList;
+    const searchTerm = DOM.inputs.runsSearch.value.toLowerCase();
+    const scrollTop = container.scrollTop;
 
-    if (allRuns.length === 0) {
-        runsList.innerHTML = '<p class="text-center">There are no available runs</p>';
+    container.innerHTML = "";
+
+    if (state.allRuns.length === 0) {
+        container.innerHTML =
+            '<div class="text-center text-secondary mt-3 small">No runs available</div>';
         return;
     }
 
-    allRuns.forEach(run => {
-        const isSelected = selectedRuns.some(r => r.name === run.name);
-        const date = new Date(run.modified_at * 1000);
-        const formattedDate = date.toLocaleDateString();
+    state.allRuns.forEach((run) => {
+        if (searchTerm && !run.name.toLowerCase().includes(searchTerm)) return;
 
-        const runItem = document.createElement('div');
-        runItem.className = 'run-item';
-        runItem.innerHTML = `
-            <div class="form-check d-flex align-items-center justify-content-between">
-                <div>
-                    <input class="form-check-input" type="checkbox" value="${run.name}" id="run-${run.name}" ${isSelected ? 'checked' : ''}>
-                    <label class="form-check-label" for="run-${run.name}">
-                        <span>${run.name}</span>
-                        <small class="text-muted ms-2">${formattedDate}</small>
-                    </label>
-                </div>
-                <button class="delete-run-btn" title="Delete run">
-                    <i class="bi bi-trash"></i>
-                </button>
+        const isSelected = state.selectedRunNames.has(run.name);
+        const date = new Date(run.modified_at * 1000).toLocaleDateString();
+
+        const div = document.createElement("div");
+        div.className = `run-item d-flex justify-content-between align-items-center ${isSelected ? "selected" : ""}`;
+
+        div.innerHTML = `
+            <div class="form-check m-0 flex-grow-1">
+                <input class="form-check-input" type="checkbox" id="run-${run.name}" ${isSelected ? "checked" : ""}>
+                <label class="form-check-label text-white text-break small" for="run-${run.name}" style="cursor:pointer">
+                    ${escapeHtml(run.name)}
+                    <div class="text-secondary" style="font-size: 0.7rem">${date}</div>
+                </label>
             </div>
+            <button class="btn btn-link btn-sm p-0 delete-run-btn" title="Delete">
+                <i class="bi bi-trash"></i>
+            </button>
         `;
 
-        runItem.querySelector('.form-check-input').addEventListener('change', (e) => {
+        const checkbox = div.querySelector("input");
+        checkbox.addEventListener("change", (e) => {
             if (e.target.checked) {
-                if (!selectedRuns.some(r => r.name === run.name)) {
-                    selectedRuns.push(run);
-                }
+                state.selectedRunNames.add(run.name);
             } else {
-                selectedRuns = selectedRuns.filter(r => r.name !== run.name);
+                state.selectedRunNames.delete(run.name);
             }
+            div.classList.toggle("selected", e.target.checked);
+            fetchAndRenderMetrics();
         });
 
-        runItem.querySelector('.delete-run-btn').addEventListener('click', (e) => {
+        div.querySelector(".delete-run-btn").addEventListener("click", (e) => {
             e.stopPropagation();
             deleteRun(run.name);
         });
 
-        runsList.appendChild(runItem);
+        container.appendChild(div);
     });
+
+    container.scrollTop = scrollTop;
 }
 
-function filterRuns() {
-    const searchTerm = runsSearch.value.toLowerCase();
-    const runItems = runsList.querySelectorAll('.run-item');
+async function deleteRun(runName) {
+    if (!confirm(`Delete run "${runName}"?`)) return;
 
-    runItems.forEach(item => {
-        const runName = item.querySelector('.form-check-label span').textContent.toLowerCase();
-        if (runName.includes(searchTerm)) {
-            item.style.display = '';
+    try {
+        const res = await apiCall("/api/delete-run", "POST", {
+            project_name: state.currentProject,
+            run_name: runName,
+        });
+        if (res.ok) {
+            state.allRuns = state.allRuns.filter((r) => r.name !== runName);
+            state.selectedRunNames.delete(runName);
+            renderRunsList();
+            fetchAndRenderMetrics();
+            showToast("Deleted", `Run ${runName} deleted`, "success");
         } else {
-            item.style.display = 'none';
+            showToast("Error", "Failed to delete run", "danger");
         }
-    });
-}
-
-function selectAllRuns() {
-    selectedRuns = [...allRuns];
-    const checkboxes = runsList.querySelectorAll('.form-check-input');
-    checkboxes.forEach(checkbox => {
-        checkbox.checked = true;
-    });
-}
-
-function deselectAllRuns() {
-    selectedRuns = [];
-    const checkboxes = runsList.querySelectorAll('.form-check-input');
-    checkboxes.forEach(checkbox => {
-        checkbox.checked = false;
-    });
-}
-
-async function applyRunsSelection() {
-    showLoading();
-    stopMetricsAutoRefresh();
-    await loadMetrics();
-    startMetricsAutoRefresh();
-    hideLoading();
-
-    const dropdownEl = document.getElementById('runsDropdown');
-    const dropdownInstance = bootstrap.Dropdown.getInstance(dropdownEl);
-    if (dropdownInstance) {
-        dropdownInstance.hide();
+    } catch (e) {
+        showToast("Error", "Network error", "danger");
     }
 }
 
-async function loadMetrics() {
-    if (selectedRuns.length === 0) {
-        stopMetricsAutoRefresh();
-        for (const metricName in charts) {
-            if (charts[metricName] && charts[metricName].instance) {
-                charts[metricName].instance.destroy();
-            }
-            if (charts[metricName] && charts[metricName].element) {
-                charts[metricName].element.remove();
-            }
-        }
-        charts = {};
-
-        if (currentFullscreenChartInstance) {
-            currentFullscreenChartInstance.destroy();
-            currentFullscreenChartInstance = null;
-            currentFullscreenMetricName = null;
-            const fsContainer = document.getElementById('fullscreen-chart-container');
-            if (fsContainer) fsContainer.innerHTML = '';
-            const modalElement = document.getElementById('fullscreen-chart-modal');
-            const modalInstance = bootstrap.Modal.getInstance(modalElement);
-            if (modalInstance) {
-                modalInstance.hide();
-            }
-        }
-        metricsContainer.innerHTML = '<div class="alert alert-warning">Select at least one run to display the metrics.</div>';
+async function fetchAndRenderMetrics() {
+    if (state.selectedRunNames.size === 0) {
+        state.metricsData = {};
+        renderCharts();
         return;
     }
 
-    const metricsData = {};
+    const newMetricsData = {};
 
-    for (const run of selectedRuns) {
+    const promises = Array.from(state.selectedRunNames).map(async (runName) => {
         try {
-            const response = await fetchWithAuth('/api/get-run', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    project_name: currentProject,
-                    run_name: run.name
-                })
+            const res = await apiCall("/api/get-run", "POST", {
+                project_name: state.currentProject,
+                run_name: runName,
             });
+            if (res.ok) {
+                const data = await res.json();
+                if (data.metrics) {
+                    data.metrics.forEach((stepMetric, index) => {
+                        Object.entries(stepMetric).forEach(([key, val]) => {
+                            if (!newMetricsData[key]) newMetricsData[key] = {};
+                            if (!newMetricsData[key][runName])
+                                newMetricsData[key][runName] = [];
 
-            if (response.ok) {
-                const data = await response.json();
-
-                if (data.metrics && data.metrics.length > 0) {
-                    data.metrics.forEach((metric, index) => {
-                        for (const [key, value] of Object.entries(metric)) {
-                            if (!metricsData[key]) {
-                                metricsData[key] = {};
-                            }
-
-                            if (!metricsData[key][run.name]) {
-                                metricsData[key][run.name] = [];
-                            }
-
-                            metricsData[key][run.name].push({
-                                x: index,
-                                y: value
+                            newMetricsData[key][runName].push({
+                                x: Number(index),
+                                y: Number(val),
                             });
-                        }
+                        });
                     });
                 }
             }
-        } catch (error) {
-            console.error(`Error loading metrics for ${run.name}:`, error);
+        } catch (e) {
+            console.error(`Error fetching metrics for ${runName}`, e);
         }
-    }
+    });
 
-    updateMetricsDisplay(metricsData);
+    await Promise.all(promises);
+    state.metricsData = newMetricsData;
+    renderCharts();
 
-    if (currentFullscreenMetricName && currentFullscreenChartInstance) {
-        const runDataForFullscreen = metricsData[currentFullscreenMetricName];
-
-        if (runDataForFullscreen) {
-            const datasets = [];
-            for (const [runName, dataPoints] of Object.entries(runDataForFullscreen)) {
-                const color = stringToColor(runName);
-                datasets.push({
-                    label: runName,
-                    data: dataPoints,
-                    borderColor: color,
-                    backgroundColor: color.replace('50%', '80%').replace('hsl', 'hsla').replace(')', ',0.2)'),
-                    borderWidth: 2,
-                    tension: 0.1,
-                    pointRadius: 3,
-                    pointHoverRadius: 5
-                });
-            }
-            currentFullscreenChartInstance.data.datasets = datasets;
-            currentFullscreenChartInstance.update();
-        } else {
-            console.warn(`Fullscreen metric '${currentFullscreenMetricName}' no longer has data. Closing modal.`);
-            const modalElement = document.getElementById('fullscreen-chart-modal');
-            const modalInstance = bootstrap.Modal.getInstance(modalElement);
-            if (modalInstance) {
-                modalInstance.hide();
-            }
-        }
+    if (state.fullscreenMetric) {
+        updateFullscreenChart();
     }
 }
 
-function updateMetricsDisplay(newMetricsData) {
-    let metricsRow = document.getElementById('metrics-row');
-    if (!metricsRow) {
-        metricsRow = document.createElement('div');
-        metricsRow.className = 'row';
-        metricsRow.id = 'metrics-row';
-        metricsContainer.innerHTML = '';
-        metricsContainer.appendChild(metricsRow);
-    }
+function renderCharts() {
+    const container = DOM.containers.charts;
+    const metricNames = Object.keys(state.metricsData);
 
-    const existingMetricNames = Object.keys(charts);
-    const newMetricNames = Object.keys(newMetricsData);
-
-    for (const metricName of existingMetricNames) {
-        if (!newMetricNames.includes(metricName)) {
-            if (charts[metricName] && charts[metricName].instance) {
-                charts[metricName].instance.destroy();
-            }
-            if (charts[metricName] && charts[metricName].element) {
-                charts[metricName].element.remove();
-            }
-            delete charts[metricName];
+    if (metricNames.length === 0) {
+        if (state.selectedRunNames.size > 0) {
+            container.innerHTML =
+                '<div class="col-12 text-center text-muted mt-5">Selected runs have no metrics data.</div>';
+        } else {
+            container.innerHTML = `
+                <div class="col-12 text-center mt-5 text-secondary">
+                    <i class="bi bi-bar-chart fs-1"></i>
+                    <p class="mt-2">Select runs from the sidebar to view metrics.</p>
+                </div>`;
         }
-    }
-
-    if (newMetricNames.length === 0) {
-        metricsRow.innerHTML = '';
-        metricsContainer.innerHTML = '<div class="alert alert-info">There are no available metrics for selected runs</div>';
-        charts = {};
+        Object.values(state.charts).forEach((c) => c.destroy());
+        state.charts = {};
         return;
     }
 
-    for (const [metricName, runData] of Object.entries(newMetricsData)) {
-        const datasets = [];
-        for (const [runName, dataPoints] of Object.entries(runData)) {
-            const color = stringToColor(runName);
-            datasets.push({
-                label: runName,
-                data: dataPoints,
-                borderColor: color,
-                backgroundColor: color.replace('50%', '80%').replace('hsl', 'hsla').replace(')', ',0.2)'),
-                borderWidth: 2,
-                tension: 0.1,
-                pointRadius: 3,
-                pointHoverRadius: 5
-            });
+    if (Object.keys(state.charts).length === 0) {
+        container.innerHTML = "";
+    }
+
+    Object.keys(state.charts).forEach((metric) => {
+        if (!metricNames.includes(metric)) {
+            state.charts[metric].destroy();
+            delete state.charts[metric];
+            const el = document.getElementById(`card-${metric}`);
+            if (el) el.remove();
+        }
+    });
+
+    metricNames.forEach((metric) => {
+        let chartInstance = state.charts[metric];
+
+        if (!chartInstance) {
+            const col = document.createElement("div");
+            col.className = "col-md-6 col-xl-4";
+            col.id = `card-${metric}`;
+            col.innerHTML = `
+                <div class="chart-card">
+                    <div class="chart-header">
+                        <h6 class="text-white m-0 text-truncate" title="${metric}">${metric}</h6>
+                        <button class="btn-fullscreen" onclick="openFullscreen('${metric}')">
+                            <i class="bi bi-arrows-fullscreen"></i>
+                        </button>
+                    </div>
+                    <div class="chart-canvas-container">
+                        <canvas></canvas>
+                    </div>
+                </div>
+            `;
+            container.appendChild(col);
+
+            const ctx = col.querySelector("canvas").getContext("2d");
+            chartInstance = createChartInstance(ctx, metric);
+            state.charts[metric] = chartInstance;
         }
 
-        if (charts[metricName]) {
-            charts[metricName].instance.data.datasets = datasets;
-            charts[metricName].instance.update();
-            if (charts[metricName].element) {
-                charts[metricName].element.style.display = '';
-            }
-        } else {
-            const col = document.createElement('div');
-            col.className = 'col-md-6 col-lg-4 metric-card';
+        updateChartData(chartInstance, state.metricsData[metric]);
+    });
+}
 
-            const card = document.createElement('div');
-            card.className = 'card h-100';
-
-            const cardBody = document.createElement('div');
-            cardBody.className = 'card-body';
-
-            const cardTitle = document.createElement('h5');
-            cardTitle.className = 'card-title text-orange mb-3';
-            cardTitle.textContent = metricName;
-
-            const chartContainer = document.createElement('div');
-            chartContainer.className = 'chart-container';
-
-            const canvas = document.createElement('canvas');
-            canvas.id = `chart-${metricName}`;
-
-            const fullscreenBtn = document.createElement('button');
-            fullscreenBtn.className = 'fullscreen-btn';
-            fullscreenBtn.innerHTML = '<i class="bi bi-fullscreen"></i>';
-            fullscreenBtn.addEventListener('click', () => {
-                openFullscreenChart(metricName, newMetricsData[metricName]);
-            });
-
-            chartContainer.appendChild(canvas);
-            chartContainer.appendChild(fullscreenBtn);
-
-            cardBody.appendChild(cardTitle);
-            cardBody.appendChild(chartContainer);
-
-            card.appendChild(cardBody);
-            col.appendChild(card);
-
-            metricsRow.appendChild(col);
-
-            const chartInstance = new Chart(canvas.getContext('2d'), {
-                type: 'line',
-                data: { datasets },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    animation: false,
-                    scales: {
-                        x: {
-                            type: 'linear',
-                            title: {
-                                display: true,
-                                text: 'Step',
-                                color: '#9e9e9e'
-                            },
-                            grid: {
-                                color: '#2d2d2d'
-                            },
-                            ticks: {
-                                color: '#9e9e9e'
-                            }
-                        },
-                        y: {
-                            title: {
-                                display: true,
-                                text: metricName,
-                                color: '#9e9e9e'
-                            },
-                            grid: {
-                                color: '#2d2d2d'
-                            },
-                            ticks: {
-                                color: '#9e9e9e'
-                            }
-                        }
+function createChartInstance(ctx, title) {
+    return new Chart(ctx, {
+        type: "line",
+        data: { datasets: [] },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: false,
+            parsing: false,
+            interaction: {
+                mode: "nearest",
+                axis: "x",
+                intersect: false,
+            },
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    backgroundColor: "#1E1E1E",
+                    titleColor: "#fff",
+                    bodyColor: "#ccc",
+                    borderColor: "#333",
+                    borderWidth: 1,
+                    callbacks: {
+                        title: (items) => `Step: ${items[0].parsed.x}`,
+                        label: (item) =>
+                            `${item.dataset.label}: ${item.parsed.y.toPrecision(5)}`,
                     },
-                    plugins: {
-                        tooltip: {
-                            mode: 'index',
-                            intersect: false,
-                            backgroundColor: '#1e1e1e',
-                            titleColor: '#ff8a00',
-                            bodyColor: '#bdbdbd',
-                            borderColor: '#2d2d2d',
-                            borderWidth: 1
-                        },
-                        legend: {
-                            position: 'top',
-                            labels: {
-                                color: '#9e9e9e',
-                                usePointStyle: true,
-                                padding: 20
-                            }
-                        }
+                },
+            },
+            scales: {
+                x: {
+                    type: "linear",
+                    display: true,
+                    grid: { color: "#222", drawBorder: false },
+                    ticks: { color: "#666", maxRotation: 0, autoSkip: true },
+                    title: {
+                        display: true,
+                        text: "Step",
+                        color: "#444",
+                        font: { size: 10 },
                     },
-                    interaction: {
-                        mode: 'nearest',
-                        axis: 'x',
-                        intersect: false
-                    }
-                }
-            });
-            charts[metricName] = { instance: chartInstance, element: col };
-        }
+                },
+                y: {
+                    type: "linear",
+                    display: true,
+                    grid: { color: "#222", drawBorder: false },
+                    ticks: { color: "#666" },
+                },
+            },
+        },
+    });
+}
+
+function updateChartData(chart, runDataMap) {
+    const datasets = [];
+
+    const availableRuns = Object.keys(runDataMap);
+    availableRuns.sort((a, b) => {
+        const indexA = state.allRuns.findIndex((r) => r.name === a);
+        const indexB = state.allRuns.findIndex((r) => r.name === b);
+        if (indexA === -1) return 1;
+        if (indexB === -1) return -1;
+        return indexA - indexB;
+    });
+
+    availableRuns.forEach((runName) => {
+        const points = runDataMap[runName];
+        const color = getRunColor(runName);
+        datasets.push({
+            label: runName,
+            data: points,
+            borderColor: color,
+            backgroundColor: "transparent",
+            borderWidth: 1.5,
+            pointRadius: 0,
+            pointHoverRadius: 4,
+            tension: 0.1,
+            spanGaps: true,
+        });
+    });
+
+    chart.data.datasets = datasets;
+    chart.update("none");
+}
+
+window.openFullscreen = function (metricName) {
+    state.fullscreenMetric = metricName;
+    document.getElementById("fullscreen-title").textContent = metricName;
+    DOM.modals.fullscreen.show();
+
+    setTimeout(() => {
+        const canvas = document.getElementById("canvas-fullscreen");
+        if (state.fullscreenChart) state.fullscreenChart.destroy();
+
+        state.fullscreenChart = new Chart(canvas.getContext("2d"), {
+            type: "line",
+            data: { datasets: [] },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: false,
+                parsing: false,
+                interaction: { mode: "nearest", axis: "x", intersect: false },
+                plugins: {
+                    legend: {
+                        display: true,
+                        labels: { color: "#ccc", boxWidth: 10 },
+                    },
+                    tooltip: {
+                        backgroundColor: "#1E1E1E",
+                        titleColor: "#fff",
+                        bodyColor: "#ccc",
+                        borderColor: "#333",
+                        borderWidth: 1,
+                        callbacks: {
+                            title: (items) => `Step: ${items[0].parsed.x}`,
+                            label: (item) =>
+                                `${item.dataset.label}: ${item.parsed.y.toPrecision(6)}`,
+                        },
+                    },
+                },
+                scales: {
+                    x: {
+                        type: "linear",
+                        grid: { color: "#222" },
+                        ticks: { color: "#888" },
+                        title: { display: true, text: "Step", color: "#666" },
+                    },
+                    y: {
+                        type: "linear",
+                        grid: { color: "#222" },
+                        ticks: { color: "#888" },
+                    },
+                },
+            },
+        });
+        updateFullscreenChart();
+    }, 200);
+};
+
+function updateFullscreenChart() {
+    if (!state.fullscreenChart || !state.fullscreenMetric) return;
+    const data = state.metricsData[state.fullscreenMetric];
+    if (data) {
+        updateChartData(state.fullscreenChart, data);
     }
 }
 
-function stringToColor(str) {
+function getRunColor(str) {
     let hash = 0;
     for (let i = 0; i < str.length; i++) {
         hash = str.charCodeAt(i) + ((hash << 5) - hash);
     }
     const h = Math.abs(hash) % 360;
-    return `hsl(${h}, 80%, 50%)`;
+    return `hsl(${h}, 85%, 60%)`;
 }
 
-function openFullscreenChart(metricName, runData) {
-    const modalElement = document.getElementById('fullscreen-chart-modal');
-    const modal = new bootstrap.Modal(modalElement);
-    document.getElementById('fullscreen-chart-title').textContent = metricName;
-
-    if (charts[metricName] && charts[metricName].element) {
-        charts[metricName].element.style.display = 'none';
-    }
-
-    modal.show();
-
-    currentFullscreenMetricName = metricName;
-
-    modalElement.addEventListener('hidden.bs.modal', async () => {
-        if (currentFullscreenChartInstance) {
-            currentFullscreenChartInstance.destroy();
-            currentFullscreenChartInstance = null;
-        }
-        if (charts[metricName] && charts[metricName].element) {
-            charts[metricName].element.style.display = '';
-        }
-        currentFullscreenMetricName = null;
-        const fsContainer = document.getElementById('fullscreen-chart-container');
-        if (fsContainer) fsContainer.innerHTML = '';
-
-        await loadMetrics();
-    }, { once: true });
-
-    setTimeout(async () => {
-        const container = document.getElementById('fullscreen-chart-container');
-        container.innerHTML = '';
-
-        const canvas = document.createElement('canvas');
-        canvas.id = `fullscreen-chart-${metricName}`;
-        container.appendChild(canvas);
-
-        const datasets = [];
-        for (const [runName, dataPoints] of Object.entries(runData)) {
-            const color = stringToColor(runName);
-            datasets.push({
-                label: runName,
-                data: dataPoints,
-                borderColor: color,
-                backgroundColor: color.replace('50%', '80%').replace('hsl', 'hsla').replace(')', ',0.2)'),
-                borderWidth: 2,
-                tension: 0.1,
-                pointRadius: 3,
-                pointHoverRadius: 5
-            });
-        }
-
-        currentFullscreenChartInstance = new Chart(canvas.getContext('2d'), {
-            type: 'line',
-            data: { datasets: datasets },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                animation: false,
-                scales: {
-                    x: {
-                        type: 'linear',
-                        title: {
-                            display: true,
-                            text: 'Step',
-                            color: '#9e9e9e'
-                        },
-                        grid: {
-                            color: '#2d2d2d'
-                        },
-                        ticks: {
-                            color: '#9e9e9e'
-                        }
-                    },
-                    y: {
-                        title: {
-                            display: true,
-                            text: metricName,
-                            color: '#9e9e9e'
-                        },
-                        grid: {
-                            color: '#2d2d2d'
-                        },
-                        ticks: {
-                            color: '#9e9e9e'
-                        }
-                    }
-                },
-                plugins: {
-                    tooltip: {
-                        mode: 'index',
-                        intersect: false,
-                        backgroundColor: '#1e1e1e',
-                        titleColor: '#ff8a00',
-                        bodyColor: '#bdbdbd',
-                        borderColor: '#2d2d2d',
-                        borderWidth: 1
-                    },
-                    legend: {
-                        position: 'top',
-                        labels: {
-                            color: '#9e9e9e',
-                            usePointStyle: true,
-                            padding: 20
-                        }
-                    }
-                },
-                interaction: {
-                    mode: 'nearest',
-                    axis: 'x',
-                    intersect: false
-                }
-            }
-        });
-        await loadMetrics();
-    }, 400);
+function startAutoRefresh() {
+    stopAutoRefresh();
+    state.intervals.runs = setInterval(
+        () => fetchRuns(true),
+        REFRESH_INTERVAL_MS,
+    );
+    state.intervals.metrics = setInterval(
+        () => fetchAndRenderMetrics(),
+        METRICS_INTERVAL_MS,
+    );
 }
 
-function showLoading() {
-    loadingContainer.classList.remove('d-none');
+function stopAutoRefresh() {
+    if (state.intervals.runs) clearInterval(state.intervals.runs);
+    if (state.intervals.metrics) clearInterval(state.intervals.metrics);
+    state.intervals.runs = null;
+    state.intervals.metrics = null;
 }
 
-function hideLoading() {
-    loadingContainer.classList.add('d-none');
+function showLoginView() {
+    DOM.views.login.classList.remove("d-none");
+    DOM.views.projects.classList.add("d-none");
+    DOM.views.dashboard.classList.add("d-none");
+    DOM.navbar.classList.add("d-none");
 }
 
-function showLogin() {
-    hideLoading();
-    loginContainer.classList.remove('d-none');
-    mainContainer.classList.add('d-none');
+function showProjectsView() {
+    stopAutoRefresh();
+    state.currentProject = null;
+    DOM.views.login.classList.add("d-none");
+    DOM.views.projects.classList.remove("d-none");
+    DOM.views.dashboard.classList.add("d-none");
+    DOM.navbar.classList.remove("d-none");
+    loadProjects();
 }
 
-function showMain() {
-    hideLoading();
-    loginContainer.classList.add('d-none');
-    mainContainer.classList.remove('d-none');
+function showDashboardView() {
+    DOM.views.login.classList.add("d-none");
+    DOM.views.projects.classList.add("d-none");
+    DOM.views.dashboard.classList.remove("d-none");
+    DOM.navbar.classList.remove("d-none");
 }
 
-function showProjects() {
-    stopMetricsAutoRefresh();
-    projectsView.classList.remove('d-none');
-    projectDetails.classList.add('d-none');
+function setLoading(isLoading) {
+    if (isLoading) DOM.overlay.classList.remove("d-none");
+    else DOM.overlay.classList.add("d-none");
 }
 
-function showProjectDetails() {
-    projectsView.classList.add('d-none');
-    projectDetails.classList.remove('d-none');
+function escapeHtml(text) {
+    if (!text) return "";
+    return text
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+}
+
+function showToast(title, message, type = "info") {
+    const toastEl = document.createElement("div");
+    toastEl.className = `toast align-items-center text-white bg-${type === "danger" ? "danger" : "dark"} border-0`;
+    toastEl.setAttribute("role", "alert");
+    toastEl.setAttribute("aria-live", "assertive");
+    toastEl.setAttribute("aria-atomic", "true");
+
+    toastEl.innerHTML = `
+        <div class="d-flex">
+            <div class="toast-body">
+                <strong>${title}</strong>: ${message}
+            </div>
+            <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+        </div>
+    `;
+
+    DOM.containers.toast.appendChild(toastEl);
+    const toast = new bootstrap.Toast(toastEl);
+    toast.show();
+    toastEl.addEventListener("hidden.bs.toast", () => toastEl.remove());
 }
 
 function setCookieCredentials(username, password) {
-    const expirationDate = new Date();
-    expirationDate.setDate(expirationDate.getDate() + 30);
-
-    document.cookie = `lmt_username=${encodeURIComponent(username)}; expires=${expirationDate.toUTCString()}; path=/; SameSite=Strict`;
-    document.cookie = `lmt_password=${encodeURIComponent(password)}; expires=${expirationDate.toUTCString()}; path=/; SameSite=Strict`;
+    const exp = new Date();
+    exp.setDate(exp.getDate() + 30);
+    document.cookie = `lmt_username=${encodeURIComponent(username)}; expires=${exp.toUTCString()}; path=/; SameSite=Strict`;
+    document.cookie = `lmt_password=${encodeURIComponent(password)}; expires=${exp.toUTCString()}; path=/; SameSite=Strict`;
 }
 
 function getCookieCredentials() {
-    const cookies = document.cookie.split(';').map(cookie => cookie.trim());
-    let username = null;
-    let password = null;
-
-    for (const cookie of cookies) {
-        if (cookie.startsWith('lmt_username=')) {
-            username = decodeURIComponent(cookie.substring('lmt_username='.length));
-        } else if (cookie.startsWith('lmt_password=')) {
-            password = decodeURIComponent(cookie.substring('lmt_password='.length));
-        }
-    }
-
-    if (username && password) {
-        return { username, password };
-    }
-
-    return null;
+    const cookies = document.cookie.split(";").map((c) => c.trim());
+    let username = null,
+        password = null;
+    cookies.forEach((c) => {
+        if (c.startsWith("lmt_username="))
+            username = decodeURIComponent(c.substring(13));
+        if (c.startsWith("lmt_password="))
+            password = decodeURIComponent(c.substring(13));
+    });
+    return username && password ? { username, password } : null;
 }
 
 function clearCookieCredentials() {
-    document.cookie = 'lmt_username=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/; SameSite=Strict';
-    document.cookie = 'lmt_password=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/; SameSite=Strict';
-}
-
-async function fetchWithAuth(url, options = {}, username = null, password = null) {
-    const user = username || currentUser;
-
-    const passCookie = document.cookie.split(';')
-        .map(cookie => cookie.trim())
-        .find(cookie => cookie.startsWith('lmt_password='));
-
-    const pass = password || (passCookie ? decodeURIComponent(passCookie.substring('lmt_password='.length)) : null);
-
-    if (!user || !pass) {
-        throw new Error('Non authorized');
-    }
-
-    const headers = options.headers || {};
-    headers['Authorization'] = `${user}:${pass}`;
-
-    return fetch(API_BASE_URL + url, {
-        ...options,
-        headers
-    });
-}
-
-async function deleteRun(runName) {
-    if (!confirm(`Are you sure you want to delete run "${runName}"? This action is irreversible!`)) {
-        return;
-    }
-    showLoading();
-    stopMetricsAutoRefresh();
-    try {
-        const response = await fetchWithAuth('/api/delete-run', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                project_name: currentProject,
-                run_name: runName
-            })
-        });
-        if (response.ok) {
-            allRuns = allRuns.filter(r => r.name !== runName);
-            selectedRuns = selectedRuns.filter(r => r.name !== runName);
-            renderRunsList();
-            await loadMetrics();
-        } else {
-            alert('Failed to delete run');
-        }
-    } catch (error) {
-        console.error('Deleting run error:', error);
-        alert('Deleting run error');
-    } finally {
-        hideLoading();
-        startMetricsAutoRefresh();
-    }
-}
-
-function startMetricsAutoRefresh() {
-    if (metricsRefreshIntervalId) {
-        clearInterval(metricsRefreshIntervalId);
-    }
-    metricsRefreshIntervalId = setInterval(async () => {
-        if (currentProject) {
-            await loadMetrics();
-            const response = await fetchWithAuth('/api/get-runs', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ project_name: currentProject })
-            });
-            if (response.ok) {
-                const data = await response.json();
-                const newAllRuns = data.runs || [];
-                if (JSON.stringify(allRuns.map(r => r.name)) !== JSON.stringify(newAllRuns.map(r => r.name))) {
-                    allRuns = newAllRuns;
-                    const newSelectedRuns = [];
-                    for (const run of allRuns) {
-                        if (selectedRuns.some(r => r.name === run.name)) {
-                            newSelectedRuns.push(run);
-                        }
-                    }
-                    selectedRuns = newSelectedRuns;
-                    renderRunsList();
-                }
-            } else {
-                console.error('Failed to auto-refresh runs list:', response.statusText);
-            }
-        }
-    }, 15000);
-}
-
-function stopMetricsAutoRefresh() {
-    if (metricsRefreshIntervalId) {
-        clearInterval(metricsRefreshIntervalId);
-        metricsRefreshIntervalId = null;
-    }
+    document.cookie =
+        "lmt_username=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/; SameSite=Strict";
+    document.cookie =
+        "lmt_password=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/; SameSite=Strict";
 }

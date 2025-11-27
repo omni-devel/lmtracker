@@ -1,18 +1,19 @@
-use actix_web::{get, post, HttpRequest, HttpResponse, web};
+use actix_web::{HttpRequest, HttpResponse, get, post, web};
 
-use crate::data::structs::{
-    self,
-    api as api_json, AppState,
-    User,
-};
 use crate::data::INVALID_NAME_CHARS;
+use crate::data::structs::{self, AppState, User, api as api_json};
 
 use crate::database;
 
 fn check_auth(req: HttpRequest, config: &structs::Config) -> Option<User> {
     let auth_data = match req.headers().get("Authorization") {
         Some(d) => {
-            let data: Vec<String> = d.to_str().unwrap().split(':').map(|s| s.to_string()).collect();
+            let data: Vec<String> = d
+                .to_str()
+                .unwrap()
+                .split(':')
+                .map(|s| s.to_string())
+                .collect();
 
             if data.len() != 2 {
                 return None;
@@ -22,13 +23,16 @@ fn check_auth(req: HttpRequest, config: &structs::Config) -> Option<User> {
                 name: data.get(0).unwrap().to_string(),
                 password: data.get(1).unwrap().to_string(),
             }
-        },
+        }
         None => {
             return None;
         }
     };
 
-    let user_is_finded = config.users.iter().any(|user| user.name == auth_data.name && user.password == auth_data.password);
+    let user_is_finded = config
+        .users
+        .iter()
+        .any(|user| user.name == auth_data.name && user.password == auth_data.password);
 
     if !user_is_finded {
         return None;
@@ -38,126 +42,117 @@ fn check_auth(req: HttpRequest, config: &structs::Config) -> Option<User> {
 }
 
 #[post("/api/create-project")]
-pub async fn create_project(req: HttpRequest, data: web::Json<api_json::CreateProjectRequest>, state: web::Data<AppState>) -> HttpResponse {
+pub async fn create_project(
+    req: HttpRequest,
+    data: web::Json<api_json::CreateProjectRequest>,
+    state: web::Data<AppState>,
+) -> HttpResponse {
     let auth_data = match check_auth(req, &state.config) {
         Some(d) => d,
         None => {
-            return HttpResponse::Unauthorized()
-                .json(api_json::OkResponse {
-                    ok: false,
-                });
+            return HttpResponse::Unauthorized().json(api_json::OkResponse { ok: false });
         }
     };
 
     if INVALID_NAME_CHARS.iter().any(|s| data.name.contains(*s)) {
-        return HttpResponse::BadRequest()
-            .json(api_json::OkWithMessageResponse {
-                ok: false,
-                message: String::from("Invalid name"),
-            });
+        return HttpResponse::BadRequest().json(api_json::OkWithMessageResponse {
+            ok: false,
+            message: String::from("Invalid name"),
+        });
     }
 
     database::create_project(&auth_data.name, &data.name).await;
 
-    HttpResponse::Ok()
-        .json(api_json::OkResponse {
-            ok: true,
-        })
+    HttpResponse::Ok().json(api_json::OkResponse { ok: true })
 }
 
 #[post("/api/push-metrics")]
-pub async fn push_metrics(req: HttpRequest, data: web::Json<api_json::PushMetricsRequest>, state: web::Data<AppState>) -> HttpResponse {
+pub async fn push_metrics(
+    req: HttpRequest,
+    data: web::Json<api_json::PushMetricsRequest>,
+    state: web::Data<AppState>,
+) -> HttpResponse {
     let auth_data = match check_auth(req, &state.config) {
         Some(d) => d,
         None => {
-            return HttpResponse::Unauthorized()
-                .json(api_json::OkResponse {
-                    ok: false,
-                });
+            return HttpResponse::Unauthorized().json(api_json::OkResponse { ok: false });
         }
     };
 
-    if INVALID_NAME_CHARS.iter().any(|s| data.project_name.contains(*s) || data.run_name.contains(*s)) {
-        return HttpResponse::BadRequest()
-            .json(api_json::OkWithMessageResponse {
-                ok: false,
-                message: String::from("Invalid name"),
-            });
+    if INVALID_NAME_CHARS
+        .iter()
+        .any(|s| data.project_name.contains(*s) || data.run_name.contains(*s))
+    {
+        return HttpResponse::BadRequest().json(api_json::OkWithMessageResponse {
+            ok: false,
+            message: String::from("Invalid name"),
+        });
     }
 
-    match database::write_metrics(&auth_data.name, &data.project_name, &data.run_name, &data.metrics).await {
-        Ok(()) => {
-            HttpResponse::Ok()
-                .json(api_json::OkResponse {
-                    ok: true,
-                })
-        },
-        Err(e) => {
-            HttpResponse::BadRequest()
-                .json(api_json::OkWithMessageResponse {
-                    ok: false,
-                    message: e,
-                })
-        }
+    match database::write_metrics(
+        &auth_data.name,
+        &data.project_name,
+        &data.run_name,
+        &data.metrics,
+    )
+    .await
+    {
+        Ok(()) => HttpResponse::Ok().json(api_json::OkResponse { ok: true }),
+        Err(e) => HttpResponse::BadRequest().json(api_json::OkWithMessageResponse {
+            ok: false,
+            message: e,
+        }),
     }
 }
 
 #[post("/api/get-run")]
-pub async fn get_run(req: HttpRequest, data: web::Json<api_json::GetRunRequest>, state: web::Data<AppState>) -> HttpResponse {
+pub async fn get_run(
+    req: HttpRequest,
+    data: web::Json<api_json::GetRunRequest>,
+    state: web::Data<AppState>,
+) -> HttpResponse {
     let auth_data = match check_auth(req, &state.config) {
         Some(d) => d,
         None => {
-            return HttpResponse::Unauthorized()
-                .json(api_json::OkResponse {
-                    ok: false,
-                });
+            return HttpResponse::Unauthorized().json(api_json::OkResponse { ok: false });
         }
     };
 
     match database::read_metrics(&auth_data.name, &data.project_name, &data.run_name).await {
-        Ok(metrics) => {
-            HttpResponse::Ok()
-                .json(api_json::GetMetricsResponse {
-                    ok: true,
-                    metrics,
-                })
-        },
-        Err(e) => {
-            HttpResponse::BadRequest()
-                .json(api_json::OkWithMessageResponse {
-                    ok: false,
-                    message: e,
-                })
-        }
+        Ok(metrics) => HttpResponse::Ok().json(api_json::GetMetricsResponse { ok: true, metrics }),
+        Err(e) => HttpResponse::BadRequest().json(api_json::OkWithMessageResponse {
+            ok: false,
+            message: e,
+        }),
     }
 }
 
 #[post("/api/delete-run")]
-pub async fn delete_run(req: HttpRequest, data: web::Json<api_json::GetRunRequest>, state: web::Data<AppState>) -> HttpResponse {
+pub async fn delete_run(
+    req: HttpRequest,
+    data: web::Json<api_json::GetRunRequest>,
+    state: web::Data<AppState>,
+) -> HttpResponse {
     let auth_data = match check_auth(req, &state.config) {
         Some(d) => d,
         None => {
-            return HttpResponse::Unauthorized()
-                .json(api_json::OkResponse {
-                    ok: false,
-                });
+            return HttpResponse::Unauthorized().json(api_json::OkResponse { ok: false });
         }
     };
 
-    if INVALID_NAME_CHARS.iter().any(|s| data.project_name.contains(*s) || data.run_name.contains(*s)) {
-        return HttpResponse::BadRequest()
-            .json(api_json::OkWithMessageResponse {
-                ok: false,
-                message: String::from("Invalid name"),
-            });
+    if INVALID_NAME_CHARS
+        .iter()
+        .any(|s| data.project_name.contains(*s) || data.run_name.contains(*s))
+    {
+        return HttpResponse::BadRequest().json(api_json::OkWithMessageResponse {
+            ok: false,
+            message: String::from("Invalid name"),
+        });
     }
 
     database::delete_run(&auth_data.name, &data.project_name, &data.run_name).await;
 
-    HttpResponse::Ok()
-        .json(api_json::OkResponse {
-            ok: true,
-        })
+    HttpResponse::Ok().json(api_json::OkResponse { ok: true })
 }
 
 #[post("/api/get-projects")]
@@ -165,64 +160,67 @@ pub async fn get_projects(req: HttpRequest, state: web::Data<AppState>) -> HttpR
     let auth_data = match check_auth(req, &state.config) {
         Some(d) => d,
         None => {
-            return HttpResponse::Unauthorized()
-                .json(api_json::OkResponse {
-                    ok: false,
-                });
+            return HttpResponse::Unauthorized().json(api_json::OkResponse { ok: false });
         }
     };
 
-    HttpResponse::Ok()
-        .json(api_json::GetProjectsResponse {
-            ok: true,
-            projects: database::get_projects(&auth_data.name).await,
-        })
+    HttpResponse::Ok().json(api_json::GetProjectsResponse {
+        ok: true,
+        projects: database::get_projects(&auth_data.name).await,
+    })
 }
 
 #[post("/api/get-runs")]
-pub async fn get_runs(req: HttpRequest, data: web::Json<api_json::GetRunsRequest>, state: web::Data<AppState>) -> HttpResponse {
+pub async fn get_runs(
+    req: HttpRequest,
+    data: web::Json<api_json::GetRunsRequest>,
+    state: web::Data<AppState>,
+) -> HttpResponse {
     let auth_data = match check_auth(req, &state.config) {
         Some(d) => d,
         None => {
-            return HttpResponse::Unauthorized()
-                .json(api_json::OkResponse {
-                    ok: false,
-                });
+            return HttpResponse::Unauthorized().json(api_json::OkResponse { ok: false });
         }
     };
 
     match database::get_runs(&auth_data.name, &data.project_name).await {
-        Ok(runs) => {
-            HttpResponse::Ok()
-                .json(api_json::GetRunsResponse {
-                    ok: true,
-                    runs,
-                })
-        },
-        Err(e) => {
-            HttpResponse::BadRequest()
-                .json(api_json::OkWithMessageResponse {
-                    ok: false,
-                    message: e,
-                })
-        }
+        Ok(runs) => HttpResponse::Ok().json(api_json::GetRunsResponse { ok: true, runs }),
+        Err(e) => HttpResponse::BadRequest().json(api_json::OkWithMessageResponse {
+            ok: false,
+            message: e,
+        }),
     }
 }
 
 #[get("/api/check-user")]
 pub async fn check_user(req: HttpRequest, state: web::Data<AppState>) -> HttpResponse {
     match check_auth(req, &state.config) {
-        Some(_) => {
-            HttpResponse::Ok()
-                .json(api_json::OkResponse {
-                    ok: true,
-                })
-        },
-        None => {
-            HttpResponse::Unauthorized()
-                .json(api_json::OkResponse {
-                    ok: false,
-                })
-        }
+        Some(_) => HttpResponse::Ok().json(api_json::OkResponse { ok: true }),
+        None => HttpResponse::Unauthorized().json(api_json::OkResponse { ok: false }),
     }
+}
+
+#[post("/api/delete-project")]
+pub async fn delete_project(
+    req: HttpRequest,
+    data: web::Json<api_json::CreateProjectRequest>,
+    state: web::Data<AppState>,
+) -> HttpResponse {
+    let auth_data = match check_auth(req, &state.config) {
+        Some(d) => d,
+        None => {
+            return HttpResponse::Unauthorized().json(api_json::OkResponse { ok: false });
+        }
+    };
+
+    if INVALID_NAME_CHARS.iter().any(|s| data.name.contains(*s)) {
+        return HttpResponse::BadRequest().json(api_json::OkWithMessageResponse {
+            ok: false,
+            message: String::from("Invalid name"),
+        });
+    }
+
+    database::delete_project(&auth_data.name, &data.name).await;
+
+    HttpResponse::Ok().json(api_json::OkResponse { ok: true })
 }

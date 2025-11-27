@@ -41,6 +41,11 @@ class LMTracker(TrainerCallback):
         logs = kwargs.get("logs")
         if logs is None or not logs:
             return
+
+        step = state.global_step
+        if step == 0:
+            return
+
         metrics = {}
         for key, value in logs.items():
             if isinstance(value, (int, float)):
@@ -55,15 +60,18 @@ class LMTracker(TrainerCallback):
                     metrics[key] = fval
                 except ValueError:
                     continue
+
         if not metrics:
             return
+
         payload = {
             "project_name": self.project_name,
             "run_name": self.run_name,
-            "step": state.global_step,
+            "step": step,
             "epoch": state.epoch,
             "metrics": metrics,
         }
+
         try:
             self._post("push-metrics", json_data=payload)
         except Exception as e:
